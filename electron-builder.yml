@@ -1,0 +1,17 @@
+appId: com.quincaillerie.gestionnaire
+productName: Gestionnaire Quincaillerie
+directories:
+  output: release
+files:
+  - out/**/*
+  - package.json
+win:
+  target:
+    - nsis
+  icon: resources/icon.ico
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  installerLanguages:
+    - fr
+  language: '1036'
