@@ -52,7 +52,7 @@ export function LicenseProvider({ children }: { children: ReactNode }) {
       void refresh(true)
     }
 
-    const interval = window.setInterval(syncLicense, 30_000)
+    const interval = window.setInterval(syncLicense, 86400_000)
     window.addEventListener('focus', syncLicense)
     window.addEventListener('online', syncLicense)
 

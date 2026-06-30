@@ -15,7 +15,7 @@ import ReportsPage from '@modules/Reports/ReportsPage'
 import SettingsPage from '@modules/Settings/SettingsPage'
 import SuppliersPage from '@modules/Suppliers/SuppliersPage'
 import { LoaderCircle } from 'lucide-react'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { HashRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { LicensedRoute } from './components/LicensedRoute'
 
 function AppRoutes() {
@@ -65,9 +65,9 @@ function AppGate() {
   }
 
   return (
-    <BrowserRouter>
+    <HashRouter>
       <AppRoutes />
-    </BrowserRouter>
+    </HashRouter>
   )
 }
 
