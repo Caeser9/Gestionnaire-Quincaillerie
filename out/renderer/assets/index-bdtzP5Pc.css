@@ -1729,6 +1729,9 @@ video {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.whitespace-pre-wrap {
+  white-space: pre-wrap;
+}
 .break-all {
   word-break: break-all;
 }
@@ -2582,6 +2585,9 @@ video {
 .dark\:bg-slate-900:is(.dark *) {
   --tw-bg-opacity: 1;
   background-color: rgb(15 23 42 / var(--tw-bg-opacity, 1));
+}
+.dark\:bg-slate-900\/60:is(.dark *) {
+  background-color: rgb(15 23 42 / 0.6);
 }
 .dark\:bg-slate-900\/95:is(.dark *) {
   background-color: rgb(15 23 42 / 0.95);

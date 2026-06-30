@@ -15,7 +15,7 @@ interface LicenseContextValue {
   loading: boolean
   isActive: boolean
   authorizedModules: string[]
-  refresh: () => Promise<void>
+  refresh: (forceOnline?: boolean) => Promise<void>
   isRouteAllowed: (path: string) => boolean
 }
 
@@ -25,7 +25,7 @@ export function LicenseProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<LicenseStatusResponse | null>(null)
   const [loading, setLoading] = useState(true)
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (forceOnline = false) => {
     if (!window.electronAPI?.getLicenseStatus) {
       setStatus({ status: 'active', authorizedModules: Object.values(ROUTE_MODULE_MAP).filter(Boolean) as string[] })
       setLoading(false)
@@ -33,7 +33,10 @@ export function LicenseProvider({ children }: { children: ReactNode }) {
     }
     setLoading(true)
     try {
-      const result = await window.electronAPI.getLicenseStatus()
+      const result =
+        forceOnline && window.electronAPI.verifyLicense
+          ? await window.electronAPI.verifyLicense()
+          : await window.electronAPI.getLicenseStatus()
       setStatus(result)
     } finally {
       setLoading(false)
@@ -41,7 +44,23 @@ export function LicenseProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    refresh()
+    refresh(true)
+  }, [refresh])
+
+  useEffect(() => {
+    const syncLicense = () => {
+      void refresh(true)
+    }
+
+    const interval = window.setInterval(syncLicense, 30_000)
+    window.addEventListener('focus', syncLicense)
+    window.addEventListener('online', syncLicense)
+
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('focus', syncLicense)
+      window.removeEventListener('online', syncLicense)
+    }
   }, [refresh])
 
   const authorizedModules = status?.authorizedModules ?? []

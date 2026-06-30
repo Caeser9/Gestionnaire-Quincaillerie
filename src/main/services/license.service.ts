@@ -82,20 +82,20 @@ export async function fetchPublicKey(forceRefresh = false): Promise<string> {
   }
 
   console.log('[License] Fetching public key from:', `${LICENSE_SERVER_URL}/public-key`)
-  
+
   try {
     const res = await fetch(`${LICENSE_SERVER_URL}/public-key`, {
       headers: {
         'Accept': 'application/json'
       }
     })
-    
+
     console.log('[License] Response status:', res.status)
-    
+
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}: ${res.statusText}`)
     }
-    
+
     const json = (await res.json()) as ApiEnvelope<{ publicKey: string }>
     const publicKey = json.data.publicKey
     if (!publicKey) throw new Error('Clé publique introuvable dans la réponse')
@@ -169,27 +169,142 @@ function toStatusResponse(
     expiresAt: stored?.payload.expiresAt,
     clientName: stored?.payload.clientName,
     licenseType: stored?.payload.licenseType,
+    adminNotes: stored?.payload.adminNotes,
     checkIntervalDays: stored?.checkIntervalDays,
     ...extra
   }
 }
 
-export async function getLicenseStatus(): Promise<LicenseStatusResponse> {
-  // Mode développement - licence toujours active
-  return {
-    status: 'active',
-    authorizedModules: [
-      'products',
-      'stock',
-      'pos',
-      'billing',
-      'reports',
-      'accounting',
-      'multi-store'
-    ],
-    clientName: 'Mode développement',
-    licenseType: 'dev'
+const OFFLINE_GRACE_DAYS = 10
+async function tryOnlineVerify(
+  stored: StoredLicense,
+  publicKey: string
+): Promise<
+  | { ok: true; updated: StoredLicense }
+  | { ok: false; reason: 'network' | 'suspended' | 'expired' | 'invalid'; message?: string }
+> {
+  let json: ApiEnvelope<{
+    valid: boolean
+    status?: LicenseStatusResponse['status']
+    message?: string
+    licenseToken: string
+    licenseKey: string
+    payload: SignedLicensePayload
+    signature: string
+    checkIntervalDays: number
+  }>
+
+  try {
+    json = await apiPost('/verify', {
+      licenseToken: stored.licenseToken,
+      machineId: getMachineId(),
+      appVersion: app.getVersion()
+    })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (/suspendue/i.test(msg)) return { ok: false, reason: 'suspended', message: msg }
+    if (/expir/i.test(msg)) return { ok: false, reason: 'expired', message: msg }
+    if (/non trouvée|non correspondant|non active/i.test(msg)) {
+      return { ok: false, reason: 'invalid', message: msg }
+    }
+    return { ok: false, reason: 'network', message: msg }
   }
+
+  const { data } = json
+  if (!verifyPayloadSignature(data.payload, data.signature, publicKey)) {
+    return { ok: false, reason: 'invalid', message: 'Signature invalide après vérification' }
+  }
+
+  const updated = saveStored({
+    licenseToken: data.licenseToken,
+    licenseKey: data.licenseKey,
+    payload: data.payload,
+    signature: data.signature,
+    checkIntervalDays: data.checkIntervalDays
+  })
+
+  return { ok: true, updated }
+}
+
+export async function getLicenseStatus(forceOnline = false): Promise<LicenseStatusResponse> {
+  const stored = loadStored()
+
+  if (!stored) {
+    return toStatusResponse('not_activated', null)
+  }
+
+  let publicKey: string | null = cachedPublicKey ?? store.get('publicKey') ?? null
+  if (!publicKey) {
+    try {
+      publicKey = await fetchPublicKey()
+    } catch {
+      publicKey = null
+    }
+  }
+
+  if (!publicKey) {
+    return toStatusResponse('invalid', stored, {
+      message:
+        'Clé publique introuvable — une connexion internet est requise lors de la première activation.'
+    })
+  }
+
+  if (!verifyPayloadSignature(stored.payload, stored.signature, publicKey)) {
+    return toStatusResponse('invalid', stored, { message: 'Signature de licence invalide' })
+  }
+
+  if (!forceOnline && stored.payload.status !== 'active') {
+    return toStatusResponse(stored.payload.status as LicenseStatusResponse['status'], stored)
+  }
+
+  if (!forceOnline && stored.payload.expiresAt && new Date(stored.payload.expiresAt) < new Date()) {
+    return toStatusResponse('expired', stored, { message: 'Licence expirée' })
+  }
+
+  const daysSinceVerified =
+    (Date.now() - new Date(stored.lastVerified).getTime()) / (1000 * 60 * 60 * 24)
+
+  if (!forceOnline && daysSinceVerified <= stored.checkIntervalDays) {
+    return toStatusResponse('active', stored)
+  }
+
+  const result = await tryOnlineVerify(stored, publicKey)
+
+  if (result.ok) {
+    return toStatusResponse(result.updated.payload.status as LicenseStatusResponse['status'], result.updated)
+  }
+
+  if (result.reason === 'suspended') {
+    return toStatusResponse('suspended', stored, { message: result.message })
+  }
+  if (result.reason === 'expired') {
+    return toStatusResponse('expired', stored, { message: result.message })
+  }
+  if (result.reason === 'invalid') {
+    return toStatusResponse('invalid', stored, { message: result.message })
+  }
+
+  if (stored.payload.status !== 'active') {
+    return toStatusResponse(stored.payload.status as LicenseStatusResponse['status'], stored, {
+      message: result.message
+    })
+  }
+
+  if (stored.payload.expiresAt && new Date(stored.payload.expiresAt) < new Date()) {
+    return toStatusResponse('expired', stored, { message: result.message ?? 'Licence expirée' })
+  }
+
+  if (daysSinceVerified <= stored.checkIntervalDays + OFFLINE_GRACE_DAYS) {
+    return toStatusResponse('active', stored, {
+      message: `Mode hors-ligne — dernière vérification il y a ${Math.floor(
+        daysSinceVerified
+      )} jours. Reconnectez-vous bientôt à internet.`
+    })
+  }
+
+  return toStatusResponse('expired', stored, {
+    message: 'Connexion internet requise pour revalider votre licence.'
+  })
 }
 
 export async function activateLicense(params: ActivateParams): Promise<ActivateResult> {
@@ -357,7 +472,23 @@ export async function transferLicense(newMachineId?: string): Promise<ActivateRe
     return { success: false, status: 'error', message: 'Aucune licence locale' }
   }
 
-  const newId = newMachineId ?? getMachineId()
+  const newId = newMachineId?.trim()
+  if (!newId || newId.length < 8) {
+    return {
+      success: false,
+      status: 'error',
+      message: 'Nouvel identifiant machine requis pour transférer la licence'
+    }
+  }
+
+  if (newId === stored.payload.machineId) {
+    return {
+      success: false,
+      status: 'error',
+      message: 'La licence est déjà liée à cet identifiant machine'
+    }
+  }
+
   const publicKey = await fetchPublicKey()
 
   const json = await apiPost<{

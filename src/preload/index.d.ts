@@ -12,7 +12,7 @@ export interface ElectronAPI {
   getLicenseModules: () => Promise<string[]>
   activateLicense: (params: ActivateParams) => Promise<ActivateResult>
   verifyLicense: () => Promise<LicenseStatusResponse>
-  transferLicense: () => Promise<ActivateResult>
+  transferLicense: (newMachineId: string) => Promise<ActivateResult>
   clearLicense: () => Promise<{ success: boolean }>
   getPendingActivation: () => Promise<ActivateParams | null>
   retryPendingActivation: () => Promise<ActivateResult>

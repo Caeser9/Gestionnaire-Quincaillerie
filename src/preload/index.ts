@@ -22,7 +22,8 @@ const api = {
   activateLicense: (params: ActivateParams): Promise<ActivateResult> =>
     ipcRenderer.invoke('license:activate', params),
   verifyLicense: (): Promise<LicenseStatusResponse> => ipcRenderer.invoke('license:verify'),
-  transferLicense: (): Promise<ActivateResult> => ipcRenderer.invoke('license:transfer'),
+  transferLicense: (newMachineId: string): Promise<ActivateResult> =>
+    ipcRenderer.invoke('license:transfer', newMachineId),
   clearLicense: (): Promise<{ success: boolean }> => ipcRenderer.invoke('license:clear'),
   getPendingActivation: (): Promise<ActivateParams | null> =>
     ipcRenderer.invoke('license:getPending'),

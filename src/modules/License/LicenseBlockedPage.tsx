@@ -41,6 +41,14 @@ export function LicenseBlockedPage({ status, onRetry }: LicenseBlockedPageProps)
         <p className="text-sm text-slate-600 dark:text-slate-400 mb-6">
           {status.message ?? info.description}
         </p>
+        {status.adminNotes && (
+          <div className="text-left rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/60 p-3 mb-4">
+            <p className="text-xs font-semibold text-slate-500 mb-1">Note administrateur</p>
+            <p className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap">
+              {status.adminNotes}
+            </p>
+          </div>
+        )}
         {status.licenseKey && (
           <p className="text-xs font-mono text-slate-400 mb-4">Clé : {status.licenseKey}</p>
         )}

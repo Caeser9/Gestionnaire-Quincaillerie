@@ -354,7 +354,7 @@ const LicenseContext = reactExports.createContext(null);
 function LicenseProvider({ children }) {
   const [status, setStatus] = reactExports.useState(null);
   const [loading, setLoading] = reactExports.useState(true);
-  const refresh = reactExports.useCallback(async () => {
+  const refresh = reactExports.useCallback(async (forceOnline = false) => {
     if (!window.electronAPI?.getLicenseStatus) {
       setStatus({ status: "active", authorizedModules: Object.values(ROUTE_MODULE_MAP).filter(Boolean) });
       setLoading(false);
@@ -362,14 +362,27 @@ function LicenseProvider({ children }) {
     }
     setLoading(true);
     try {
-      const result = await window.electronAPI.getLicenseStatus();
+      const result = forceOnline && window.electronAPI.verifyLicense ? await window.electronAPI.verifyLicense() : await window.electronAPI.getLicenseStatus();
       setStatus(result);
     } finally {
       setLoading(false);
     }
   }, []);
   reactExports.useEffect(() => {
-    refresh();
+    refresh(true);
+  }, [refresh]);
+  reactExports.useEffect(() => {
+    const syncLicense = () => {
+      void refresh(true);
+    };
+    const interval = window.setInterval(syncLicense, 3e4);
+    window.addEventListener("focus", syncLicense);
+    window.addEventListener("online", syncLicense);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", syncLicense);
+      window.removeEventListener("online", syncLicense);
+    };
   }, [refresh]);
   const authorizedModules = status?.authorizedModules ?? [];
   const isRouteAllowed = reactExports.useCallback(
@@ -36253,6 +36266,10 @@ function LicenseBlockedPage({ status, onRetry }) {
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "w-14 h-14 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center mx-auto mb-4", children: status.status === "suspended" ? /* @__PURE__ */ jsxRuntimeExports.jsx(ShieldOff, { size: 28, className: "text-red-600" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(TriangleAlert, { size: 28, className: "text-red-600" }) }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "text-xl font-bold text-slate-900 dark:text-white mb-2", children: info.title }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-slate-600 dark:text-slate-400 mb-6", children: status.message ?? info.description }),
+    status.adminNotes && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "text-left rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/60 p-3 mb-4", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs font-semibold text-slate-500 mb-1", children: "Note administrateur" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap", children: status.adminNotes })
+    ] }),
     status.licenseKey && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-xs font-mono text-slate-400 mb-4", children: [
       "Clé : ",
       status.licenseKey
@@ -65034,6 +65051,17 @@ function SettingsPage() {
     },
     onError: (err) => zt.error(err.message)
   });
+  const verifyLicenseNow = async () => {
+    try {
+      if (window.electronAPI?.verifyLicense) {
+        await window.electronAPI.verifyLicense();
+      }
+      await refresh();
+      zt.success("Licence verifiee");
+    } catch (err) {
+      zt.error(err instanceof Error ? err.message : "Erreur de verification licence");
+    }
+  };
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-8 max-w-2xl", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "page-title", children: "Paramètres" }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "page-subtitle", children: "Configuration de la société" }),
@@ -65120,11 +65148,15 @@ function SettingsPage() {
         /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-slate-500 mb-1", children: "Modules autorisés" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex flex-wrap gap-1.5", children: authorizedModules.map((m2) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "badge-neutral text-xs", children: m2 }, m2)) })
       ] }),
+      status?.adminNotes && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-slate-500 mb-1", children: "Note administrateur" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm whitespace-pre-wrap rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/60 p-3", children: status.adminNotes })
+      ] }),
       machineId && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-xs text-slate-400 font-mono break-all", children: [
         "Machine ID : ",
         machineId
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex gap-2 pt-2", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { variant: "secondary", onClick: () => refresh(), children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex gap-2 pt-2", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { variant: "secondary", onClick: verifyLicenseNow, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshCw, { size: 16 }),
         "Vérifier la licence"
       ] }) })

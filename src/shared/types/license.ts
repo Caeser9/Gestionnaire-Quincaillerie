@@ -17,6 +17,7 @@ export interface SignedLicensePayload {
   machineId: string
   activatedAt: string
   expiresAt?: string
+  adminNotes?: string
   issuedAt: string
 }
 
@@ -48,6 +49,7 @@ export interface LicenseStatusResponse {
   expiresAt?: string
   clientName?: string
   licenseType?: string
+  adminNotes?: string
   checkIntervalDays?: number
 }
 

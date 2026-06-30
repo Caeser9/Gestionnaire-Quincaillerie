@@ -3132,21 +3132,113 @@ async function apiPost(path2, body) {
   }
   return json;
 }
-async function getLicenseStatus() {
+function toStatusResponse(gate, stored, extra) {
   return {
-    status: "active",
-    authorizedModules: [
-      "products",
-      "stock",
-      "pos",
-      "billing",
-      "reports",
-      "accounting",
-      "multi-store"
-    ],
-    clientName: "Mode développement",
-    licenseType: "dev"
+    status: gate,
+    authorizedModules: stored?.payload.authorizedModules ?? [],
+    payload: stored?.payload,
+    licenseKey: stored?.licenseKey ?? stored?.payload.licenseKey,
+    expiresAt: stored?.payload.expiresAt,
+    clientName: stored?.payload.clientName,
+    licenseType: stored?.payload.licenseType,
+    adminNotes: stored?.payload.adminNotes,
+    checkIntervalDays: stored?.checkIntervalDays,
+    ...extra
   };
+}
+const OFFLINE_GRACE_DAYS = 10;
+async function tryOnlineVerify(stored, publicKey) {
+  let json;
+  try {
+    json = await apiPost("/verify", {
+      licenseToken: stored.licenseToken,
+      machineId: getMachineId(),
+      appVersion: electron.app.getVersion()
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/suspendue/i.test(msg)) return { ok: false, reason: "suspended", message: msg };
+    if (/expir/i.test(msg)) return { ok: false, reason: "expired", message: msg };
+    if (/non trouvée|non correspondant|non active/i.test(msg)) {
+      return { ok: false, reason: "invalid", message: msg };
+    }
+    return { ok: false, reason: "network", message: msg };
+  }
+  const { data } = json;
+  if (!verifyPayloadSignature(data.payload, data.signature, publicKey)) {
+    return { ok: false, reason: "invalid", message: "Signature invalide après vérification" };
+  }
+  const updated = saveStored({
+    licenseToken: data.licenseToken,
+    licenseKey: data.licenseKey,
+    payload: data.payload,
+    signature: data.signature,
+    checkIntervalDays: data.checkIntervalDays
+  });
+  return { ok: true, updated };
+}
+async function getLicenseStatus(forceOnline = false) {
+  const stored = loadStored();
+  if (!stored) {
+    return toStatusResponse("not_activated", null);
+  }
+  let publicKey = cachedPublicKey ?? store.get("publicKey") ?? null;
+  if (!publicKey) {
+    try {
+      publicKey = await fetchPublicKey();
+    } catch {
+      publicKey = null;
+    }
+  }
+  if (!publicKey) {
+    return toStatusResponse("invalid", stored, {
+      message: "Clé publique introuvable — une connexion internet est requise lors de la première activation."
+    });
+  }
+  if (!verifyPayloadSignature(stored.payload, stored.signature, publicKey)) {
+    return toStatusResponse("invalid", stored, { message: "Signature de licence invalide" });
+  }
+  if (!forceOnline && stored.payload.status !== "active") {
+    return toStatusResponse(stored.payload.status, stored);
+  }
+  if (!forceOnline && stored.payload.expiresAt && new Date(stored.payload.expiresAt) < /* @__PURE__ */ new Date()) {
+    return toStatusResponse("expired", stored, { message: "Licence expirée" });
+  }
+  const daysSinceVerified = (Date.now() - new Date(stored.lastVerified).getTime()) / (1e3 * 60 * 60 * 24);
+  if (!forceOnline && daysSinceVerified <= stored.checkIntervalDays) {
+    return toStatusResponse("active", stored);
+  }
+  const result = await tryOnlineVerify(stored, publicKey);
+  if (result.ok) {
+    return toStatusResponse(result.updated.payload.status, result.updated);
+  }
+  if (result.reason === "suspended") {
+    return toStatusResponse("suspended", stored, { message: result.message });
+  }
+  if (result.reason === "expired") {
+    return toStatusResponse("expired", stored, { message: result.message });
+  }
+  if (result.reason === "invalid") {
+    return toStatusResponse("invalid", stored, { message: result.message });
+  }
+  if (stored.payload.status !== "active") {
+    return toStatusResponse(stored.payload.status, stored, {
+      message: result.message
+    });
+  }
+  if (stored.payload.expiresAt && new Date(stored.payload.expiresAt) < /* @__PURE__ */ new Date()) {
+    return toStatusResponse("expired", stored, { message: result.message ?? "Licence expirée" });
+  }
+  if (daysSinceVerified <= stored.checkIntervalDays + OFFLINE_GRACE_DAYS) {
+    return toStatusResponse("active", stored, {
+      message: `Mode hors-ligne — dernière vérification il y a ${Math.floor(
+        daysSinceVerified
+      )} jours. Reconnectez-vous bientôt à internet.`
+    });
+  }
+  return toStatusResponse("expired", stored, {
+    message: "Connexion internet requise pour revalider votre licence."
+  });
 }
 async function activateLicense(params) {
   await fetchPublicKey(true);
@@ -3264,7 +3356,21 @@ async function transferLicense(newMachineId) {
   if (!stored) {
     return { success: false, status: "error", message: "Aucune licence locale" };
   }
-  const newId = getMachineId();
+  const newId = newMachineId?.trim();
+  if (!newId || newId.length < 8) {
+    return {
+      success: false,
+      status: "error",
+      message: "Nouvel identifiant machine requis pour transférer la licence"
+    };
+  }
+  if (newId === stored.payload.machineId) {
+    return {
+      success: false,
+      status: "error",
+      message: "La licence est déjà liée à cet identifiant machine"
+    };
+  }
   const publicKey = await fetchPublicKey();
   const json = await apiPost("/transfer", {
     licenseToken: stored.licenseToken,
@@ -3395,8 +3501,8 @@ function registerIpcHandlers() {
   electron.ipcMain.handle("license:getMachineId", () => getMachineId());
   electron.ipcMain.handle("license:getModules", () => getAuthorizedModules());
   electron.ipcMain.handle("license:activate", (_e, params) => activateLicense(params));
-  electron.ipcMain.handle("license:verify", () => getLicenseStatus());
-  electron.ipcMain.handle("license:transfer", () => transferLicense());
+  electron.ipcMain.handle("license:verify", () => getLicenseStatus(true));
+  electron.ipcMain.handle("license:transfer", (_e, newMachineId) => transferLicense(newMachineId));
   electron.ipcMain.handle("license:clear", () => {
     clearLocalLicense();
     return { success: true };

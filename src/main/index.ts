@@ -119,8 +119,8 @@ function registerIpcHandlers(): void {
   ipcMain.handle('license:getMachineId', () => getMachineId())
   ipcMain.handle('license:getModules', () => getAuthorizedModules())
   ipcMain.handle('license:activate', (_e, params) => activateLicense(params))
-  ipcMain.handle('license:verify', () => getLicenseStatus())
-  ipcMain.handle('license:transfer', () => transferLicense())
+  ipcMain.handle('license:verify', () => getLicenseStatus(true))
+  ipcMain.handle('license:transfer', (_e, newMachineId?: string) => transferLicense(newMachineId))
   ipcMain.handle('license:clear', () => {
     clearLocalLicense()
     return { success: true }

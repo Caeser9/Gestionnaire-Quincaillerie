@@ -69,6 +69,18 @@ export default function SettingsPage() {
     onError: (err: Error) => toast.error(err.message)
   })
 
+  const verifyLicenseNow = async () => {
+    try {
+      if (window.electronAPI?.verifyLicense) {
+        await window.electronAPI.verifyLicense()
+      }
+      await refresh()
+      toast.success('Licence verifiee')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Erreur de verification licence')
+    }
+  }
+
   return (
     <div className="space-y-8 max-w-2xl">
       <h1 className="page-title">Paramètres</h1>
@@ -152,11 +164,19 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
+        {status?.adminNotes && (
+          <div>
+            <p className="text-sm text-slate-500 mb-1">Note administrateur</p>
+            <p className="text-sm whitespace-pre-wrap rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/60 p-3">
+              {status.adminNotes}
+            </p>
+          </div>
+        )}
         {machineId && (
           <p className="text-xs text-slate-400 font-mono break-all">Machine ID : {machineId}</p>
         )}
         <div className="flex gap-2 pt-2">
-          <Button variant="secondary" onClick={() => refresh()}>
+          <Button variant="secondary" onClick={verifyLicenseNow}>
             <RefreshCw size={16} />
             Vérifier la licence
           </Button>
