@@ -335,6 +335,70 @@ function useTheme() {
   if (!ctx) throw new Error("useTheme must be used within ThemeProvider");
   return ctx;
 }
+const PRODUCT_SLUG = "hardware-store";
+const ROUTE_MODULE_MAP = {
+  "/": null,
+  "/pos": "pos",
+  "/products": "products",
+  "/inventory": "stock",
+  "/purchases": "stock",
+  "/suppliers": "stock",
+  "/customers": "pos",
+  "/invoices": "billing",
+  "/client-debts": "billing",
+  "/finance": "accounting",
+  "/reports": "reports",
+  "/settings": null
+};
+const LicenseContext = reactExports.createContext(null);
+function LicenseProvider({ children }) {
+  const [status, setStatus] = reactExports.useState(null);
+  const [loading, setLoading] = reactExports.useState(true);
+  const refresh = reactExports.useCallback(async () => {
+    if (!window.electronAPI?.getLicenseStatus) {
+      setStatus({ status: "active", authorizedModules: Object.values(ROUTE_MODULE_MAP).filter(Boolean) });
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const result = await window.electronAPI.getLicenseStatus();
+      setStatus(result);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  reactExports.useEffect(() => {
+    refresh();
+  }, [refresh]);
+  const authorizedModules = status?.authorizedModules ?? [];
+  const isRouteAllowed = reactExports.useCallback(
+    (path) => {
+      if (status?.status !== "active") return false;
+      const moduleKey = ROUTE_MODULE_MAP[path];
+      if (moduleKey === null || moduleKey === void 0) return true;
+      return authorizedModules.includes(moduleKey);
+    },
+    [status?.status, authorizedModules]
+  );
+  const value = reactExports.useMemo(
+    () => ({
+      status,
+      loading,
+      isActive: status?.status === "active",
+      authorizedModules,
+      refresh,
+      isRouteAllowed
+    }),
+    [status, loading, authorizedModules, refresh, isRouteAllowed]
+  );
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(LicenseContext.Provider, { value, children });
+}
+function useLicense() {
+  const ctx = reactExports.useContext(LicenseContext);
+  if (!ctx) throw new Error("useLicense must be used within LicenseProvider");
+  return ctx;
+}
 var Subscribable = class {
   constructor() {
     this.listeners = /* @__PURE__ */ new Set();
@@ -10434,6 +10498,22 @@ const Inbox = createLucideIcon("Inbox", [
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
+const KeyRound = createLucideIcon("KeyRound", [
+  [
+    "path",
+    {
+      d: "M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z",
+      key: "1s6t7t"
+    }
+  ],
+  ["circle", { cx: "16.5", cy: "7.5", r: ".5", fill: "currentColor", key: "w0ekpg" }]
+]);
+/**
+ * @license lucide-react v0.468.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
 const LayoutDashboard = createLucideIcon("LayoutDashboard", [
   ["rect", { width: "7", height: "9", x: "3", y: "3", rx: "1", key: "10lvy0" }],
   ["rect", { width: "7", height: "5", x: "14", y: "3", rx: "1", key: "16une8" }],
@@ -10568,6 +10648,18 @@ const Receipt = createLucideIcon("Receipt", [
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
+const RefreshCw = createLucideIcon("RefreshCw", [
+  ["path", { d: "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8", key: "v9h5vc" }],
+  ["path", { d: "M21 3v5h-5", key: "1q7to0" }],
+  ["path", { d: "M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16", key: "3uifl3" }],
+  ["path", { d: "M8 16H3v5", key: "1cv678" }]
+]);
+/**
+ * @license lucide-react v0.468.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
 const Search = createLucideIcon("Search", [
   ["circle", { cx: "11", cy: "11", r: "8", key: "4ej97u" }],
   ["path", { d: "m21 21-4.3-4.3", key: "1qie3q" }]
@@ -10587,6 +10679,45 @@ const Settings = createLucideIcon("Settings", [
     }
   ],
   ["circle", { cx: "12", cy: "12", r: "3", key: "1v7zrd" }]
+]);
+/**
+ * @license lucide-react v0.468.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const ShieldCheck = createLucideIcon("ShieldCheck", [
+  [
+    "path",
+    {
+      d: "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z",
+      key: "oel41y"
+    }
+  ],
+  ["path", { d: "m9 12 2 2 4-4", key: "dzmm74" }]
+]);
+/**
+ * @license lucide-react v0.468.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const ShieldOff = createLucideIcon("ShieldOff", [
+  ["path", { d: "m2 2 20 20", key: "1ooewy" }],
+  [
+    "path",
+    {
+      d: "M5 5a1 1 0 0 0-1 1v7c0 5 3.5 7.5 7.67 8.94a1 1 0 0 0 .67.01c2.35-.82 4.48-1.97 5.9-3.71",
+      key: "1jlk70"
+    }
+  ],
+  [
+    "path",
+    {
+      d: "M9.309 3.652A12.252 12.252 0 0 0 11.24 2.28a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1v7a9.784 9.784 0 0 1-.08 1.264",
+      key: "18rp1v"
+    }
+  ]
 ]);
 /**
  * @license lucide-react v0.468.0 - ISC
@@ -12319,11 +12450,21 @@ const navGroups = [
     ]
   }
 ];
+function isNavItemVisible(path, authorizedModules) {
+  const moduleKey = ROUTE_MODULE_MAP[path];
+  if (moduleKey === null || moduleKey === void 0) return true;
+  return authorizedModules.includes(moduleKey);
+}
 function Layout({ children }) {
   const { theme, toggleTheme } = useTheme();
+  const { authorizedModules } = useLicense();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = reactExports.useState(false);
-  const currentPage = navGroups.flatMap((g2) => g2.items).find(
+  const filteredNavGroups = navGroups.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => isNavItemVisible(item.path, authorizedModules))
+  })).filter((group) => group.items.length > 0);
+  const currentPage = filteredNavGroups.flatMap((g2) => g2.items).find(
     (item) => item.path === location.pathname || item.path !== "/" && location.pathname.startsWith(item.path)
   );
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex h-screen overflow-hidden bg-slate-50 dark:bg-slate-950", children: [
@@ -12354,7 +12495,7 @@ function Layout({ children }) {
               }
             )
           ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("nav", { className: "flex-1 overflow-y-auto px-3 py-4 space-y-5", children: navGroups.map((group) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("nav", { className: "flex-1 overflow-y-auto px-3 py-4 space-y-5", children: filteredNavGroups.map((group) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "px-3 mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400", children: group.label }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "space-y-0.5", children: group.items.map((item) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
               NavLink,
@@ -35916,6 +36057,211 @@ function DocumentLines({ doc, showDebt }) {
       ] })
     ] })
   ] });
+}
+function LicenseActivationPage({
+  onActivated,
+  initialPending,
+  machineId
+}) {
+  const [form, setForm] = reactExports.useState({
+    companyName: "",
+    contactEmail: "",
+    contactPhone: "",
+    licenseKey: ""
+  });
+  const [loading, setLoading] = reactExports.useState(false);
+  const [checking, setChecking] = reactExports.useState(false);
+  const [pending, setPending] = reactExports.useState(initialPending ?? false);
+  const [hwId, setHwId] = reactExports.useState(machineId ?? "");
+  reactExports.useEffect(() => {
+    if (!hwId && window.electronAPI?.getLicenseMachineId) {
+      window.electronAPI.getLicenseMachineId().then(setHwId);
+    }
+  }, [hwId]);
+  reactExports.useEffect(() => {
+    window.electronAPI?.getPendingActivation?.().then((saved) => {
+      if (saved) {
+        setForm(saved);
+        setPending(true);
+      }
+    });
+  }, []);
+  const checkApproval = reactExports.useCallback(async () => {
+    if (!window.electronAPI?.retryPendingActivation) return false;
+    setChecking(true);
+    try {
+      const result = await window.electronAPI.retryPendingActivation();
+      if (result.success && (result.status === "activated" || result.status === "already_active")) {
+        zt.success("Licence activée !");
+        onActivated();
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error("[License] check failed:", err);
+      return false;
+    } finally {
+      setChecking(false);
+    }
+  }, [onActivated]);
+  reactExports.useEffect(() => {
+    if (!pending) return;
+    checkApproval();
+    const interval = setInterval(checkApproval, 8e3);
+    return () => clearInterval(interval);
+  }, [pending, checkApproval]);
+  const handleActivate = async () => {
+    if (!form.companyName.trim() || !form.contactEmail.trim()) {
+      zt.error("Raison sociale et email requis");
+      return;
+    }
+    if (!window.electronAPI?.activateLicense) {
+      zt.error("API licence indisponible");
+      return;
+    }
+    setLoading(true);
+    try {
+      const payload = {
+        companyName: form.companyName.trim(),
+        contactEmail: form.contactEmail.trim(),
+        contactPhone: form.contactPhone?.trim() || void 0,
+        licenseKey: form.licenseKey?.trim() || void 0
+      };
+      const result = await window.electronAPI.activateLicense(payload);
+      if (result.status === "pending") {
+        setPending(true);
+        zt.success(result.message ?? "Demande envoyée — en attente de validation");
+        return;
+      }
+      if (result.success) {
+        zt.success(result.message ?? "Licence activée");
+        onActivated();
+      } else {
+        zt.error(result.message ?? "Activation échouée");
+      }
+    } catch (err) {
+      zt.error(err instanceof Error ? err.message : "Erreur réseau");
+    } finally {
+      setLoading(false);
+    }
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "min-h-screen flex items-center justify-center page-bg p-6", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "card w-full max-w-lg p-8 shadow-2xl", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-3 mb-6", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "w-12 h-12 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Wrench, { size: 24, className: "text-white" }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "text-xl font-bold text-slate-900 dark:text-white", children: "Activation du logiciel" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-slate-500", children: "Gestionnaire Quincaillerie" })
+      ] })
+    ] }),
+    pending ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "text-center py-8 space-y-4", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        LoaderCircle,
+        {
+          size: 40,
+          className: `mx-auto text-primary-500 ${checking ? "animate-spin" : ""}`
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "font-medium text-slate-700 dark:text-slate-300", children: "En attente de validation administrateur" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-sm text-slate-500", children: [
+        "Une fois approuvée dans le dashboard, la licence sera récupérée automatiquement.",
+        /* @__PURE__ */ jsxRuntimeExports.jsx("br", {}),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-mono text-xs", children: "licenceskayapps.duckdns.org" })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col sm:flex-row gap-2 justify-center", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { loading: checking, onClick: checkApproval, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshCw, { size: 16 }),
+          "Vérifier maintenant"
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { variant: "secondary", onClick: () => setPending(false), children: "Modifier la demande" })
+      ] })
+    ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-slate-600 dark:text-slate-400 mb-5", children: "Une connexion Internet est requise pour la première activation. Ensuite, le logiciel fonctionne hors ligne." }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-1", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          Input,
+          {
+            label: "Raison sociale *",
+            value: form.companyName,
+            onChange: (e3) => setForm({ ...form, companyName: e3.target.value }),
+            placeholder: "Ma Quincaillerie SARL"
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          Input,
+          {
+            label: "Email de contact *",
+            type: "email",
+            value: form.contactEmail,
+            onChange: (e3) => setForm({ ...form, contactEmail: e3.target.value })
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          Input,
+          {
+            label: "Téléphone",
+            value: form.contactPhone,
+            onChange: (e3) => setForm({ ...form, contactPhone: e3.target.value })
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          Input,
+          {
+            label: "Clé de licence (si déjà fournie)",
+            value: form.licenseKey,
+            onChange: (e3) => setForm({ ...form, licenseKey: e3.target.value }),
+            placeholder: "A1B2-C3D4-E5F6-7890"
+          }
+        )
+      ] }),
+      hwId && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-xs text-slate-400 mt-3 font-mono break-all", children: [
+        "ID machine : ",
+        hwId.slice(0, 16),
+        "…"
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-xs text-slate-400 mt-2", children: [
+        "Produit : ",
+        PRODUCT_SLUG
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { className: "w-full mt-6", size: "lg", loading, onClick: handleActivate, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(ShieldCheck, { size: 18 }),
+        "Activer le logiciel"
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-center text-xs text-slate-400 mt-6 flex items-center justify-center gap-1", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(KeyRound, { size: 12 }),
+      "Licence gérée par Kay Apps"
+    ] })
+  ] }) });
+}
+const TITLES = {
+  suspended: {
+    title: "Licence suspendue",
+    description: "Votre licence a été suspendue par l'administrateur. Contactez le support Kay Apps pour la réactiver."
+  },
+  expired: {
+    title: "Licence expirée",
+    description: "Votre licence a expiré. Renouvelez votre abonnement pour continuer à utiliser le logiciel."
+  },
+  invalid: {
+    title: "Licence invalide",
+    description: "La licence locale est invalide ou une vérification en ligne est requise."
+  }
+};
+function LicenseBlockedPage({ status, onRetry }) {
+  const info = TITLES[status.status] ?? TITLES.invalid;
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "min-h-screen flex items-center justify-center page-bg p-6", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "card max-w-md w-full p-8 text-center", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "w-14 h-14 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center mx-auto mb-4", children: status.status === "suspended" ? /* @__PURE__ */ jsxRuntimeExports.jsx(ShieldOff, { size: 28, className: "text-red-600" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(TriangleAlert, { size: 28, className: "text-red-600" }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "text-xl font-bold text-slate-900 dark:text-white mb-2", children: info.title }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-slate-600 dark:text-slate-400 mb-6", children: status.message ?? info.description }),
+    status.licenseKey && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-xs font-mono text-slate-400 mb-4", children: [
+      "Clé : ",
+      status.licenseKey
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { onClick: onRetry, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshCw, { size: 16 }),
+      "Réessayer la vérification"
+    ] })
+  ] }) });
 }
 function roundMoney(value) {
   return Math.round(value * 1e3) / 1e3;
@@ -64645,6 +64991,8 @@ function ReportsPage() {
 }
 function SettingsPage() {
   const queryClient2 = useQueryClient();
+  const { status, authorizedModules, refresh } = useLicense();
+  const [machineId, setMachineId] = reactExports.useState("");
   const [form, setForm] = reactExports.useState({
     companyName: "",
     companyAddress: "",
@@ -64669,6 +65017,9 @@ function SettingsPage() {
       });
     }
   }, [settings]);
+  reactExports.useEffect(() => {
+    window.electronAPI?.getLicenseMachineId?.().then(setMachineId);
+  }, []);
   const saveMutation = useMutation({
     mutationFn: (data) => apiRequest("/settings", {
       method: "PUT",
@@ -64741,6 +65092,42 @@ function SettingsPage() {
         }
       ),
       /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { loading: saveMutation.isPending, onClick: () => saveMutation.mutate(form), children: "Enregistrer" })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "card p-6 space-y-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("h2", { className: "text-lg font-semibold mb-2 flex items-center gap-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(KeyRound, { size: 18 }),
+        "Licence logiciel"
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid grid-cols-2 gap-3 text-sm", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-slate-500", children: "Statut" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "font-medium capitalize", children: status?.status ?? "—" })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-slate-500", children: "Type" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "font-medium", children: status?.licenseType ?? "—" })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-slate-500", children: "Clé" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "font-mono text-xs", children: status?.licenseKey ?? "—" })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-slate-500", children: "Expiration" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "font-medium", children: status?.expiresAt ? new Date(status.expiresAt).toLocaleDateString("fr-FR") : "Illimitée" })
+        ] })
+      ] }),
+      authorizedModules.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-slate-500 mb-1", children: "Modules autorisés" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex flex-wrap gap-1.5", children: authorizedModules.map((m2) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "badge-neutral text-xs", children: m2 }, m2)) })
+      ] }),
+      machineId && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-xs text-slate-400 font-mono break-all", children: [
+        "Machine ID : ",
+        machineId
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex gap-2 pt-2", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { variant: "secondary", onClick: () => refresh(), children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshCw, { size: 16 }),
+        "Vérifier la licence"
+      ] }) })
     ] })
   ] });
 }
@@ -65300,22 +65687,52 @@ function SuppliersPage() {
     )
   ] });
 }
-function App() {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx(BrowserRouter, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(Layout, { children: /* @__PURE__ */ jsxRuntimeExports.jsxs(Routes, { children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "/", element: /* @__PURE__ */ jsxRuntimeExports.jsx(DashboardPage, {}) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "/pos", element: /* @__PURE__ */ jsxRuntimeExports.jsx(POSPage, {}) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "/products", element: /* @__PURE__ */ jsxRuntimeExports.jsx(ProductsPage, {}) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "/inventory", element: /* @__PURE__ */ jsxRuntimeExports.jsx(InventoryPage, {}) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "/purchases", element: /* @__PURE__ */ jsxRuntimeExports.jsx(PurchasesPage, {}) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "/suppliers", element: /* @__PURE__ */ jsxRuntimeExports.jsx(SuppliersPage, {}) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "/customers", element: /* @__PURE__ */ jsxRuntimeExports.jsx(CustomersPage, {}) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "/invoices", element: /* @__PURE__ */ jsxRuntimeExports.jsx(InvoicesPage, {}) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "/client-debts", element: /* @__PURE__ */ jsxRuntimeExports.jsx(ClientDebtsPage, {}) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "/finance", element: /* @__PURE__ */ jsxRuntimeExports.jsx(FinancePage, {}) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "/reports", element: /* @__PURE__ */ jsxRuntimeExports.jsx(ReportsPage, {}) }),
+function LicensedRoute({ children }) {
+  const { isRouteAllowed } = useLicense();
+  const location = useLocation();
+  if (!isRouteAllowed(location.pathname)) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx(Navigate, { to: "/", replace: true });
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(jsxRuntimeExports.Fragment, { children });
+}
+function AppRoutes() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(Layout, { children: /* @__PURE__ */ jsxRuntimeExports.jsxs(Routes, { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "/", element: /* @__PURE__ */ jsxRuntimeExports.jsx(LicensedRoute, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(DashboardPage, {}) }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "/pos", element: /* @__PURE__ */ jsxRuntimeExports.jsx(LicensedRoute, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(POSPage, {}) }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "/products", element: /* @__PURE__ */ jsxRuntimeExports.jsx(LicensedRoute, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(ProductsPage, {}) }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "/inventory", element: /* @__PURE__ */ jsxRuntimeExports.jsx(LicensedRoute, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(InventoryPage, {}) }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "/purchases", element: /* @__PURE__ */ jsxRuntimeExports.jsx(LicensedRoute, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(PurchasesPage, {}) }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "/suppliers", element: /* @__PURE__ */ jsxRuntimeExports.jsx(LicensedRoute, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(SuppliersPage, {}) }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "/customers", element: /* @__PURE__ */ jsxRuntimeExports.jsx(LicensedRoute, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(CustomersPage, {}) }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "/invoices", element: /* @__PURE__ */ jsxRuntimeExports.jsx(LicensedRoute, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(InvoicesPage, {}) }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "/client-debts", element: /* @__PURE__ */ jsxRuntimeExports.jsx(LicensedRoute, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(ClientDebtsPage, {}) }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "/finance", element: /* @__PURE__ */ jsxRuntimeExports.jsx(LicensedRoute, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(FinancePage, {}) }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "/reports", element: /* @__PURE__ */ jsxRuntimeExports.jsx(LicensedRoute, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(ReportsPage, {}) }) }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "/settings", element: /* @__PURE__ */ jsxRuntimeExports.jsx(SettingsPage, {}) }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(Route, { path: "*", element: /* @__PURE__ */ jsxRuntimeExports.jsx(Navigate, { to: "/", replace: true }) })
-  ] }) }) });
+  ] }) });
+}
+function AppGate() {
+  const { status, loading, refresh, isActive } = useLicense();
+  if (loading) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "min-h-screen flex items-center justify-center page-bg", children: /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { size: 40, className: "animate-spin text-primary-500" }) });
+  }
+  if (status?.status === "suspended" || status?.status === "expired" || status?.status === "invalid") {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx(LicenseBlockedPage, { status, onRetry: refresh });
+  }
+  if (!isActive) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx(
+      LicenseActivationPage,
+      {
+        onActivated: refresh,
+        initialPending: status?.status === "pending"
+      }
+    );
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(BrowserRouter, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(AppRoutes, {}) });
+}
+function App() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(AppGate, {});
 }
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -65328,7 +65745,7 @@ const queryClient = new QueryClient({
 });
 createRoot(document.getElementById("root")).render(
   /* @__PURE__ */ jsxRuntimeExports.jsx(reactExports.StrictMode, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(QueryClientProvider, { client: queryClient, children: /* @__PURE__ */ jsxRuntimeExports.jsxs(ThemeProvider, { children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx(App, {}),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(LicenseProvider, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(App, {}) }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(
       Fe,
       {

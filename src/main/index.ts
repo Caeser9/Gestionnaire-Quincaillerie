@@ -5,6 +5,16 @@ import { connectDatabase } from './db/connection'
 import { seedDatabase } from './db/seed'
 import { Settings } from './db/models'
 import { startServer, getServerPort } from './server'
+import {
+  activateLicense,
+  getAuthorizedModules,
+  getLicenseStatus,
+  getMachineId,
+  transferLicense,
+  clearLocalLicense,
+  getPendingActivation,
+  retryPendingActivation
+} from './services/license.service'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -104,6 +114,19 @@ function registerIpcHandlers(): void {
 
     return { success: false }
   })
+
+  ipcMain.handle('license:getStatus', () => getLicenseStatus())
+  ipcMain.handle('license:getMachineId', () => getMachineId())
+  ipcMain.handle('license:getModules', () => getAuthorizedModules())
+  ipcMain.handle('license:activate', (_e, params) => activateLicense(params))
+  ipcMain.handle('license:verify', () => getLicenseStatus())
+  ipcMain.handle('license:transfer', () => transferLicense())
+  ipcMain.handle('license:clear', () => {
+    clearLocalLicense()
+    return { success: true }
+  })
+  ipcMain.handle('license:getPending', () => getPendingActivation())
+  ipcMain.handle('license:retryPending', () => retryPendingActivation())
 }
 
 app.whenReady().then(async () => {

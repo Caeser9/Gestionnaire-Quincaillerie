@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { ActivateParams, ActivateResult, LicenseStatusResponse } from '@shared/types/license'
 
 const api = {
   getVersion: (): Promise<string> => ipcRenderer.invoke('app:getVersion'),
@@ -12,7 +13,21 @@ const api = {
     defaultName: string,
     data: string
   ): Promise<{ success: boolean; path?: string }> =>
-    ipcRenderer.invoke('dialog:saveFile', defaultName, data)
+    ipcRenderer.invoke('dialog:saveFile', defaultName, data),
+
+  getLicenseStatus: (): Promise<LicenseStatusResponse> =>
+    ipcRenderer.invoke('license:getStatus'),
+  getLicenseMachineId: (): Promise<string> => ipcRenderer.invoke('license:getMachineId'),
+  getLicenseModules: (): Promise<string[]> => ipcRenderer.invoke('license:getModules'),
+  activateLicense: (params: ActivateParams): Promise<ActivateResult> =>
+    ipcRenderer.invoke('license:activate', params),
+  verifyLicense: (): Promise<LicenseStatusResponse> => ipcRenderer.invoke('license:verify'),
+  transferLicense: (): Promise<ActivateResult> => ipcRenderer.invoke('license:transfer'),
+  clearLicense: (): Promise<{ success: boolean }> => ipcRenderer.invoke('license:clear'),
+  getPendingActivation: (): Promise<ActivateParams | null> =>
+    ipcRenderer.invoke('license:getPending'),
+  retryPendingActivation: (): Promise<ActivateResult> =>
+    ipcRenderer.invoke('license:retryPending')
 }
 
 contextBridge.exposeInMainWorld('electronAPI', api)

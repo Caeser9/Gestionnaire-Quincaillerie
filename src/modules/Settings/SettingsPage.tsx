@@ -1,8 +1,10 @@
 import { Button } from '@renderer/components/ui/Button'
 import { Input } from '@renderer/components/ui/Input'
+import { useLicense } from '@renderer/contexts/LicenseContext'
 import { DEFAULT_MONGO_URI } from '@shared/constants'
 import { apiRequest } from '@renderer/lib/api'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { KeyRound, RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
 
@@ -18,6 +20,8 @@ interface Settings {
 
 export default function SettingsPage() {
   const queryClient = useQueryClient()
+  const { status, authorizedModules, refresh } = useLicense()
+  const [machineId, setMachineId] = useState('')
   const [form, setForm] = useState({
     companyName: '',
     companyAddress: '',
@@ -44,6 +48,10 @@ export default function SettingsPage() {
       })
     }
   }, [settings])
+
+  useEffect(() => {
+    window.electronAPI?.getLicenseMachineId?.().then(setMachineId)
+  }, [])
 
   const saveMutation = useMutation({
     mutationFn: (data: typeof form) =>
@@ -105,6 +113,54 @@ export default function SettingsPage() {
         <Button loading={saveMutation.isPending} onClick={() => saveMutation.mutate(form)}>
           Enregistrer
         </Button>
+      </section>
+
+      <section className="card p-6 space-y-3">
+        <h2 className="text-lg font-semibold mb-2 flex items-center gap-2">
+          <KeyRound size={18} />
+          Licence logiciel
+        </h2>
+        <div className="grid grid-cols-2 gap-3 text-sm">
+          <div>
+            <p className="text-slate-500">Statut</p>
+            <p className="font-medium capitalize">{status?.status ?? '—'}</p>
+          </div>
+          <div>
+            <p className="text-slate-500">Type</p>
+            <p className="font-medium">{status?.licenseType ?? '—'}</p>
+          </div>
+          <div>
+            <p className="text-slate-500">Clé</p>
+            <p className="font-mono text-xs">{status?.licenseKey ?? '—'}</p>
+          </div>
+          <div>
+            <p className="text-slate-500">Expiration</p>
+            <p className="font-medium">
+              {status?.expiresAt ? new Date(status.expiresAt).toLocaleDateString('fr-FR') : 'Illimitée'}
+            </p>
+          </div>
+        </div>
+        {authorizedModules.length > 0 && (
+          <div>
+            <p className="text-sm text-slate-500 mb-1">Modules autorisés</p>
+            <div className="flex flex-wrap gap-1.5">
+              {authorizedModules.map((m) => (
+                <span key={m} className="badge-neutral text-xs">
+                  {m}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        {machineId && (
+          <p className="text-xs text-slate-400 font-mono break-all">Machine ID : {machineId}</p>
+        )}
+        <div className="flex gap-2 pt-2">
+          <Button variant="secondary" onClick={() => refresh()}>
+            <RefreshCw size={16} />
+            Vérifier la licence
+          </Button>
+        </div>
       </section>
     </div>
   )

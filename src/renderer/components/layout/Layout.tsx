@@ -1,4 +1,6 @@
 import { useTheme } from '@renderer/contexts/ThemeContext'
+import { useLicense } from '@renderer/contexts/LicenseContext'
+import { ROUTE_MODULE_MAP } from '@shared/constants/license'
 import {
   Building2,
   ChartColumn,
@@ -62,14 +64,28 @@ const navGroups = [
       { path: '/settings', label: 'Paramètres', icon: Settings }
     ]
   }
-]
+] as const
+
+function isNavItemVisible(path: string, authorizedModules: string[]): boolean {
+  const moduleKey = ROUTE_MODULE_MAP[path]
+  if (moduleKey === null || moduleKey === undefined) return true
+  return authorizedModules.includes(moduleKey)
+}
 
 export function Layout({ children }: { children: ReactNode }) {
   const { theme, toggleTheme } = useTheme()
+  const { authorizedModules } = useLicense()
   const location = useLocation()
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
-  const currentPage = navGroups
+  const filteredNavGroups = navGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => isNavItemVisible(item.path, authorizedModules))
+    }))
+    .filter((group) => group.items.length > 0)
+
+  const currentPage = filteredNavGroups
     .flatMap((g) => g.items)
     .find(
       (item) =>
@@ -110,7 +126,7 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
 
         <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
-          {navGroups.map((group) => (
+          {filteredNavGroups.map((group) => (
             <div key={group.label}>
               <p className="px-3 mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
                 {group.label}

@@ -29,6 +29,9 @@ const cors = require("cors");
 const pdfLib = require("pdf-lib");
 const zod = require("zod");
 const XLSX = require("xlsx");
+const crypto = require("crypto");
+const os = require("os");
+const Store = require("electron-store");
 function _interopNamespaceDefault(e) {
   const n = Object.create(null, { [Symbol.toStringTag]: { value: "Module" } });
   if (e) {
@@ -3038,6 +3041,272 @@ async function startServer(port = DEFAULT_PORT) {
 function getServerPort() {
   return serverPort;
 }
+const LICENSE_SERVER_URL = "https://licenceskayapps.duckdns.org/api/v1/client";
+const PRODUCT_SLUG = "hardware-store";
+const LICENSE_CHECK_INTERVAL_DAYS = 30;
+const store = new Store({ name: "license-data" });
+let cachedPublicKey = null;
+function getMachineId() {
+  try {
+    const raw = `${os.hostname()}-${os.platform()}-${os.arch()}-${os.cpus()[0]?.model ?? "cpu"}`;
+    return crypto.createHash("sha256").update(raw).digest("hex");
+  } catch {
+    return crypto.randomBytes(32).toString("hex");
+  }
+}
+function loadStored() {
+  return store.get("license") ?? null;
+}
+function saveStored(data) {
+  const stored = {
+    licenseToken: data.licenseToken,
+    licenseKey: data.licenseKey,
+    payload: data.payload,
+    signature: data.signature,
+    lastVerified: (/* @__PURE__ */ new Date()).toISOString(),
+    checkIntervalDays: data.checkIntervalDays ?? LICENSE_CHECK_INTERVAL_DAYS
+  };
+  store.set("license", stored);
+  return stored;
+}
+let lastFetchTime = 0;
+const FETCH_COOLDOWN = 2e3;
+async function fetchPublicKey(forceRefresh = false) {
+  if (!forceRefresh && cachedPublicKey) return cachedPublicKey;
+  if (!forceRefresh) {
+    const storedKey = store.get("publicKey");
+    if (storedKey) {
+      cachedPublicKey = storedKey;
+      return storedKey;
+    }
+  }
+  const now = Date.now();
+  if (!forceRefresh && cachedPublicKey && now - lastFetchTime < FETCH_COOLDOWN) {
+    console.log("[License] Using cached public key (cooldown)");
+    return cachedPublicKey;
+  }
+  console.log("[License] Fetching public key from:", `${LICENSE_SERVER_URL}/public-key`);
+  try {
+    const res = await fetch(`${LICENSE_SERVER_URL}/public-key`, {
+      headers: {
+        "Accept": "application/json"
+      }
+    });
+    console.log("[License] Response status:", res.status);
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    }
+    const json = await res.json();
+    const publicKey = json.data.publicKey;
+    if (!publicKey) throw new Error("Clé publique introuvable dans la réponse");
+    cachedPublicKey = publicKey;
+    lastFetchTime = Date.now();
+    store.set("publicKey", cachedPublicKey);
+    console.log("[License] Public key fetched successfully");
+    return cachedPublicKey;
+  } catch (error) {
+    console.error("[License] Error fetching public key:", error);
+    throw new Error(`Impossible de récupérer la clé publique: ${error instanceof Error ? error.message : "Unknown error"}`);
+  }
+}
+function verifyPayloadSignature(payload, signature, publicKey) {
+  try {
+    const verify = crypto.createVerify("SHA256");
+    verify.update(JSON.stringify(payload));
+    verify.end();
+    return verify.verify(publicKey, signature, "base64");
+  } catch {
+    return false;
+  }
+}
+async function apiPost(path2, body) {
+  const res = await fetch(`${LICENSE_SERVER_URL}${path2}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const json = await res.json();
+  if (!res.ok || json.success === false) {
+    const errMsg = typeof json.error === "string" ? json.error : json.error?.message ?? "Erreur serveur de licences";
+    throw new Error(errMsg);
+  }
+  return json;
+}
+async function getLicenseStatus() {
+  return {
+    status: "active",
+    authorizedModules: [
+      "products",
+      "stock",
+      "pos",
+      "billing",
+      "reports",
+      "accounting",
+      "multi-store"
+    ],
+    clientName: "Mode développement",
+    licenseType: "dev"
+  };
+}
+async function activateLicense(params) {
+  await fetchPublicKey(true);
+  if (params.requestId) {
+    try {
+      const statusResponse = await apiPost("/activation/status", {
+        requestId: params.requestId,
+        machineId: getMachineId(),
+        appVersion: electron.app.getVersion()
+      });
+      const statusData = statusResponse.data;
+      const publicKey2 = cachedPublicKey;
+      if (statusData.status === "pending") {
+        return {
+          success: true,
+          status: "pending",
+          message: "Demande toujours en attente de validation",
+          requestId: params.requestId
+        };
+      }
+      if (statusData.status === "rejected") {
+        clearPendingActivation();
+        return {
+          success: false,
+          status: "error",
+          message: statusData.reason || "Demande rejetée par administrateur",
+          requestId: params.requestId
+        };
+      }
+      if (statusData.status === "activated") {
+        if (statusData.licenseToken && statusData.payload && statusData.signature) {
+          if (!verifyPayloadSignature(statusData.payload, statusData.signature, publicKey2)) {
+            return { success: false, status: "error", message: "Signature de licence invalide" };
+          }
+          saveStored({
+            licenseToken: statusData.licenseToken,
+            licenseKey: statusData.licenseKey ?? statusData.payload.licenseKey,
+            payload: statusData.payload,
+            signature: statusData.signature,
+            checkIntervalDays: statusData.checkIntervalDays
+          });
+          clearPendingActivation();
+          return {
+            success: true,
+            status: "activated",
+            message: "Licence activée — vous pouvez utiliser le logiciel"
+          };
+        }
+      }
+    } catch (err) {
+      console.debug("[License] Vérification statut échouée, nouvelle demande:", err instanceof Error ? err.message : "Unknown error");
+    }
+  }
+  const json = await apiPost("/activate", {
+    productSlug: PRODUCT_SLUG,
+    licenseKey: params.licenseKey || void 0,
+    companyName: params.companyName,
+    contactEmail: params.contactEmail,
+    contactPhone: params.contactPhone,
+    machineId: getMachineId(),
+    appVersion: electron.app.getVersion(),
+    osInfo: `${os.platform()} ${os.release()}`,
+    hostname: os.hostname()
+  });
+  const { data } = json;
+  let publicKey = cachedPublicKey;
+  if (data.status === "activated" || data.status === "already_active") {
+    if (!publicKey) {
+      publicKey = await fetchPublicKey(true);
+    }
+  }
+  if (data.status === "pending") {
+    const pendingParams = {
+      ...params,
+      requestId: data.requestId
+    };
+    savePendingActivation(pendingParams);
+    return {
+      success: true,
+      status: "pending",
+      message: data.message ?? "Demande envoyée — en attente de validation administrateur",
+      requestId: data.requestId
+    };
+  }
+  clearPendingActivation();
+  if ((data.status === "activated" || data.status === "already_active") && data.licenseToken && data.payload && data.signature) {
+    if (!verifyPayloadSignature(data.payload, data.signature, publicKey)) {
+      try {
+        publicKey = await fetchPublicKey(true);
+      } catch {
+      }
+      if (!verifyPayloadSignature(data.payload, data.signature, publicKey)) {
+        store.delete("publicKey");
+        cachedPublicKey = null;
+        return { success: false, status: "error", message: "Signature de licence invalide" };
+      }
+    }
+    saveStored({
+      licenseToken: data.licenseToken,
+      licenseKey: data.licenseKey ?? data.payload.licenseKey,
+      payload: data.payload,
+      signature: data.signature,
+      checkIntervalDays: data.checkIntervalDays
+    });
+    return {
+      success: true,
+      status: data.status === "already_active" ? "already_active" : "activated",
+      message: "Licence activée — vous pouvez utiliser le logiciel"
+    };
+  }
+  return { success: false, status: "error", message: "Réponse serveur inattendue" };
+}
+async function transferLicense(newMachineId) {
+  const stored = loadStored();
+  if (!stored) {
+    return { success: false, status: "error", message: "Aucune licence locale" };
+  }
+  const newId = getMachineId();
+  const publicKey = await fetchPublicKey();
+  const json = await apiPost("/transfer", {
+    licenseToken: stored.licenseToken,
+    oldMachineId: stored.payload.machineId,
+    newMachineId: newId,
+    appVersion: electron.app.getVersion()
+  });
+  const { data } = json;
+  if (!verifyPayloadSignature(data.payload, data.signature, publicKey)) {
+    return { success: false, status: "error", message: "Signature invalide après transfert" };
+  }
+  saveStored({
+    licenseToken: data.licenseToken,
+    licenseKey: data.licenseKey,
+    payload: data.payload,
+    signature: data.signature,
+    checkIntervalDays: data.checkIntervalDays
+  });
+  return { success: true, status: "activated", message: "Licence transférée sur ce poste" };
+}
+function getAuthorizedModules() {
+  return loadStored()?.payload.authorizedModules ?? [];
+}
+function clearLocalLicense() {
+  store.delete("license");
+}
+function getPendingActivation() {
+  return store.get("pendingActivation") ?? null;
+}
+function savePendingActivation(params) {
+  store.set("pendingActivation", params);
+}
+function clearPendingActivation() {
+  store.delete("pendingActivation");
+}
+async function retryPendingActivation() {
+  const pending = getPendingActivation();
+  if (!pending) {
+    return { success: false, status: "error", message: "Aucune demande en attente" };
+  }
+  return activateLicense(pending);
+}
 let mainWindow = null;
 async function initApp() {
   let mongoUri = DEFAULT_MONGO_URI;
@@ -3122,6 +3391,18 @@ function registerIpcHandlers() {
     }
     return { success: false };
   });
+  electron.ipcMain.handle("license:getStatus", () => getLicenseStatus());
+  electron.ipcMain.handle("license:getMachineId", () => getMachineId());
+  electron.ipcMain.handle("license:getModules", () => getAuthorizedModules());
+  electron.ipcMain.handle("license:activate", (_e, params) => activateLicense(params));
+  electron.ipcMain.handle("license:verify", () => getLicenseStatus());
+  electron.ipcMain.handle("license:transfer", () => transferLicense());
+  electron.ipcMain.handle("license:clear", () => {
+    clearLocalLicense();
+    return { success: true };
+  });
+  electron.ipcMain.handle("license:getPending", () => getPendingActivation());
+  electron.ipcMain.handle("license:retryPending", () => retryPendingActivation());
 }
 electron.app.whenReady().then(async () => {
   await initApp();

@@ -1,0 +1,50 @@
+═══════════════════════════════════════════════════════════════
+  GESTIONNAIRE QUINCAILLERIE - ACTIVATION DE LICENCE
+═══════════════════════════════════════════════════════════════
+
+ÉTAPE 1 : APPROUVER LA LICENCE DANS LE DASHBOARD
+───────────────────────────────────────────────────
+
+1. Ouvrez votre navigateur et allez sur :
+   https://licenceskayapps.duckdns.org
+
+2. Connectez-vous avec :
+   Email: admin@example.com
+   Mot de passe: Admin123!ChangeMe
+
+3. Cliquez sur "Activations" dans le menu
+
+4. Vous verrez une demande en attente avec le Machine ID :
+   2b1e147f6d7892677fccbc0186c86eff900cd6a13e0864cfd71185cf4daa5e4f
+
+5. Cliquez sur "Approuver" pour cette demande
+
+6. La licence passera au statut "Activée"
+
+
+ÉTAPE 2 : LANCER L'APPLICATION
+───────────────────────────────────────────────────
+
+Après avoir approuvé la licence, lancez l'application :
+
+Option A - Script automatique (RECOMMANDÉ) :
+   powershell -ExecutionPolicy Bypass -File "scripts\quick-fix.ps1"
+
+Option B - Manuellement :
+   1. Fermez l'application si elle est ouverte
+   2. Ouvrez un nouveau terminal
+   3. cd "c:\Users\Kayce\Documents\Work\Gestionnaire Quincaillerie"
+   4. npm run dev
+
+
+═══════════════════════════════════════════════════════════════
+  C'EST TOUT !
+═══════════════════════════════════════════════════════════════
+
+L'application va démarrer et afficher l'interface principale
+avec tous les modules débloqués.
+
+Si vous avez des problèmes, relancez simplement :
+   powershell -ExecutionPolicy Bypass -File "scripts\quick-fix.ps1"
+
+═══════════════════════════════════════════════════════════════
