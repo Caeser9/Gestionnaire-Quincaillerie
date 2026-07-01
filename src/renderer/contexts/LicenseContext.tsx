@@ -53,12 +53,10 @@ export function LicenseProvider({ children }: { children: ReactNode }) {
     }
 
     const interval = window.setInterval(syncLicense, 86400_000)
-    window.addEventListener('focus', syncLicense)
     window.addEventListener('online', syncLicense)
 
     return () => {
       window.clearInterval(interval)
-      window.removeEventListener('focus', syncLicense)
       window.removeEventListener('online', syncLicense)
     }
   }, [refresh])
@@ -95,3 +93,4 @@ export function useLicense() {
   if (!ctx) throw new Error('useLicense must be used within LicenseProvider')
   return ctx
 }
+
