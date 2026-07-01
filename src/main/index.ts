@@ -5,6 +5,8 @@ import { connectDatabase } from './db/connection'
 import { seedDatabase } from './db/seed'
 import { Settings } from './db/models'
 import { startServer, getServerPort } from './server'
+import { startDemoServer } from './server/demo'
+import { isDemoMode } from './demoMode'
 import {
   activateLicense,
   getAuthorizedModules,
@@ -19,6 +21,12 @@ import {
 let mainWindow: BrowserWindow | null = null
 
 async function initApp(): Promise<void> {
+  if (isDemoMode()) {
+    console.log('[DEMO] Starting JSON demo mode')
+    await startDemoServer(DEFAULT_PORT)
+    return
+  }
+
   let mongoUri = DEFAULT_MONGO_URI
 
   try {
@@ -142,3 +150,4 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
+

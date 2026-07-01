@@ -2,6 +2,7 @@ import { app } from 'electron'
 import crypto from 'crypto'
 import os from 'os'
 import Store from 'electron-store'
+import { isDemoMode } from '../demoMode'
 import {
   LICENSE_CHECK_INTERVAL_DAYS,
   LICENSE_SERVER_URL,
@@ -227,6 +228,17 @@ async function tryOnlineVerify(
 }
 
 export async function getLicenseStatus(forceOnline = false): Promise<LicenseStatusResponse> {
+  if (isDemoMode()) {
+    return {
+      status: 'active',
+      authorizedModules: ['products', 'stock', 'pos', 'billing'],
+      clientName: 'Client Demo',
+      licenseType: 'demo',
+      licenseKey: 'DEMO-PORTABLE',
+      adminNotes: 'Version demo portable avec donnees JSON locales.'
+    }
+  }
+
   const stored = loadStored()
 
   if (!stored) {
@@ -522,6 +534,7 @@ export async function transferLicense(newMachineId?: string): Promise<ActivateRe
 }
 
 export function getAuthorizedModules(): string[] {
+  if (isDemoMode()) return ['products', 'stock', 'pos', 'billing']
   return loadStored()?.payload.authorizedModules ?? []
 }
 
