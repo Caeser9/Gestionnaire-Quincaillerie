@@ -12,6 +12,7 @@ export interface SignedLicensePayload {
   maxUsers: number
   maxWorkstations: number
   authorizedModules: string[]
+  dashboardMode?: 'pro' | 'simple'
   minVersion?: string
   maxVersion?: string
   machineId: string
@@ -45,6 +46,7 @@ export interface LicenseStatusResponse {
   requestId?: string
   payload?: SignedLicensePayload
   authorizedModules: string[]
+  dashboardMode?: 'pro' | 'simple'
   licenseKey?: string
   expiresAt?: string
   clientName?: string

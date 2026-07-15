@@ -3,7 +3,7 @@ import { Product, Category, SubCategory } from '../../db/models'
 import { attachActor, getActorId } from '../middleware/context'
 import { sendSuccess, sendError, handleZodError, asyncHandler } from '../middleware/response'
 import { productSchema, categorySchema, subCategorySchema } from '@shared/validation/schemas'
-import { getNextProductReference } from '../../services/reference.service'
+import { getNextReference } from '../../services/reference.service'
 import { calculateSalePrice } from '@shared/utils'
 import { logAudit } from '../../services/audit.service'
 import * as XLSX from 'xlsx'
@@ -95,14 +95,17 @@ router.post('/products', asyncHandler(async (req, res) => {
     return
   }
 
-  const categoryId = parsed.data.categoryId
-  if (!categoryId) {
-    sendError(res, 'Catégorie requise pour générer la référence', 400)
-    return
+  // Allow client to provide a reference; otherwise generate one
+  let reference = typeof parsed.data.reference === 'string' && parsed.data.reference.trim() ? parsed.data.reference.trim() : undefined
+  if (reference) {
+    const exists = await Product.findOne({ reference })
+    if (exists) {
+      sendError(res, 'Référence déjà utilisée', 400)
+      return
+    }
+  } else {
+    reference = await getNextReference('product')
   }
-
-  // Génération automatique de la référence basée sur la catégorie
-  const reference = await getNextProductReference(categoryId)
 
   // Calculate salePrice from purchasePrice + profitMargin if not provided directly
   const productData = { ...parsed.data, reference }
@@ -146,7 +149,6 @@ router.put('/products/:id', asyncHandler(async (req, res) => {
     return
   }
 
-  // Si la catégorie change, la référence doit être régénérée
   const updateData = { ...parsed.data }
 
   // Recalculate salePrice if profitMargin or purchasePrice changed
@@ -159,12 +161,6 @@ router.put('/products/:id', asyncHandler(async (req, res) => {
     updateData.salePrice = calculateSalePrice(pp, updateData.profitMargin ?? old.profitMargin)
   } else if (updateData.purchasePrice !== undefined && updateData.profitMargin === undefined && updateData.salePrice === undefined) {
     updateData.salePrice = calculateSalePrice(updateData.purchasePrice, old.profitMargin)
-  }
-  const newCategoryId = updateData.categoryId ? String(updateData.categoryId) : undefined
-  if (newCategoryId && newCategoryId !== old.categoryId?.toString()) {
-    const newRef = await getNextProductReference(newCategoryId)
-    updateData.reference = newRef
-    updateData.categoryId = newCategoryId
   }
 
   const product = await Product.findByIdAndUpdate(productId, updateData, { new: true })

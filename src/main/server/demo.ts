@@ -4,7 +4,7 @@ import cors from 'cors'
 import fs from 'fs/promises'
 import path from 'path'
 import { DEFAULT_PORT, DEFAULT_SETTINGS, TIMBRE_FISCAL_AMOUNT } from '@shared/constants'
-import { roundMoney, applyDiscount, calculateFodec } from '@shared/utils'
+import { roundMoney, applyDiscount } from '@shared/utils'
 
 interface DemoCategory {
   _id: string
@@ -41,7 +41,6 @@ interface DemoProduct {
   profitMargin: number
   discount: number
   tva: number
-  subjectToFodec?: boolean
   stock: number
   minStock: number
   unit: string
@@ -239,6 +238,29 @@ function computeSale(db: DemoDb, body: Record<string, unknown>): { lines: DemoSa
   const linesInput = Array.isArray(body.lines) ? body.lines as Array<Record<string, unknown>> : []
   const includeTva = Boolean(body.includeTva)
   const lines: DemoSaleLine[] = linesInput.map((line) => {
+    const isCustom =
+      line.isCustom === true ||
+      String(line.productId || '').startsWith('custom-') ||
+      (line.productId && !/^[a-f\d]{24}$/i.test(String(line.productId)))
+
+    if (isCustom) {
+      const quantity = Math.max(1, Number(line.quantity || 1))
+      const unitPrice = Math.max(0, Number(line.unitPrice || 0))
+      const discount = Math.max(0, Number(line.discount || 0))
+      const tva = Number(line.tva ?? 19)
+      const totalHT = roundMoney(applyDiscount(unitPrice * quantity, discount))
+      const totalTTC = roundMoney(totalHT + (includeTva ? totalHT * (tva / 100) : 0))
+      return {
+        reference: String(line.reference || 'DIV'),
+        designation: String(line.designation || 'Article divers'),
+        quantity,
+        unitPrice,
+        discount,
+        totalHT,
+        totalTTC
+      }
+    }
+
     const product = db.products.find((item) => item._id === line.productId)
     if (!product) throw new Error('Produit demo introuvable')
     const quantity = Math.max(1, Number(line.quantity || 1))
@@ -258,13 +280,7 @@ function computeSale(db: DemoDb, body: Record<string, unknown>): { lines: DemoSa
   })
 
   const totalHT = roundMoney(lines.reduce((sum, line) => sum + line.totalHT, 0))
-  const fodec = calculateFodec(
-    lines.reduce((sum, line) => {
-      const product = db.products.find((item) => item._id === line.productId)
-      return sum + (product?.subjectToFodec ? line.totalHT : 0)
-    }, 0)
-  )
-  const totalBeforeStamp = roundMoney(lines.reduce((sum, line) => sum + line.totalTTC, 0) + fodec)
+  const totalBeforeStamp = roundMoney(lines.reduce((sum, line) => sum + line.totalTTC, 0))
   const paymentMethod = String(body.paymentMethod || 'cash')
   const cashReceived = body.cashReceived === undefined ? totalBeforeStamp + TIMBRE_FISCAL_AMOUNT : Number(body.cashReceived)
   const paidAmount = paymentMethod === 'credit' ? 0 : Math.min(cashReceived, totalBeforeStamp + TIMBRE_FISCAL_AMOUNT)
@@ -360,7 +376,6 @@ export function createDemoApp(): Express {
       profitMargin: Number(req.body.profitMargin || 25),
       discount: Number(req.body.discount || 0),
       tva: Number(req.body.tva || 19),
-      subjectToFodec: Boolean(req.body.subjectToFodec),
       stock: Number(req.body.stock || 0),
       minStock: Number(req.body.minStock || 0),
       unit: String(req.body.unit || 'piece'),
@@ -443,7 +458,7 @@ export function createDemoApp(): Express {
       if (!product) continue
       const before = product.stock
       product.stock = Math.max(0, product.stock - line.quantity)
-      db.stockMovements.unshift({ _id: makeId('movement', db), createdAt: nowIso(), type: 'out', reason: 'sale', quantity: line.quantity, stockBefore: before, stockAfter: product.stock, productId: { designation: product.designation } })
+      db.stockMovements.unshift({ _id: makeId('movement', db), createdAt: nowIso(), type: 'out', reason: 'vente', quantity: line.quantity, stockBefore: before, stockAfter: product.stock, productId: { designation: product.designation } })
     }
     if (documentType === 'invoice') db.invoices.unshift(doc)
     else db.purchaseSlips.unshift(doc)
@@ -460,12 +475,17 @@ export function createDemoApp(): Express {
 
   app.get('/api/stock/valuation', async (_req, res) => {
     const db = await loadDb()
+    const lowStock = db.products.filter((p) => p.stock <= p.minStock)
     send(res, {
       totalProducts: db.products.length,
-      purchaseValue: roundMoney(db.products.reduce((sum, p) => sum + p.purchasePrice * p.stock, 0)),
-      saleValue: roundMoney(db.products.reduce((sum, p) => sum + p.salePrice * p.stock, 0)),
-      lowStockProducts: db.products.filter((p) => p.stock <= p.minStock)
+      currentStock: db.products.reduce((sum, p) => sum + p.stock, 0),
+      restockCount: lowStock.length,
+      lowStockProducts: lowStock
     })
+  })
+  app.get('/api/stock/alerts', async (_req, res) => {
+    const db = await loadDb()
+    send(res, db.products.filter((p) => p.stock <= p.minStock))
   })
   app.get('/api/stock/movements', async (req, res) => send(res, page((await loadDb()).stockMovements, req)))
   app.post('/api/stock/adjust', async (req, res) => {

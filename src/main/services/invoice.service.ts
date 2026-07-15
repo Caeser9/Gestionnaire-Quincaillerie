@@ -2,6 +2,7 @@ import { Invoice, PurchaseSlip, Sale } from '../db/models'
 import { TIMBRE_FISCAL_AMOUNT } from '@shared/constants'
 import { roundMoney } from '@shared/utils'
 import { getNextReference } from './reference.service'
+import { createDeliveryNote } from './delivery-note.service'
 import type { Document } from 'mongoose'
 
 type SlipDoc = Document & {
@@ -12,7 +13,6 @@ type SlipDoc = Document & {
   lines: unknown[]
   totalHT: number
   totalTVA: number
-  totalFodec?: number
   totalTTC: number
   amountPaid: number
   amountDue: number
@@ -47,7 +47,6 @@ export async function convertPurchaseSlipToInvoice(
     lines: slip.lines,
     totalHT: slip.totalHT,
     totalTVA: slip.totalTVA,
-    totalFodec: slip.totalFodec ?? 0,
     timbreFiscal: timbre,
     totalTTC,
     amountPaid: totalTTC,
@@ -64,6 +63,26 @@ export async function convertPurchaseSlipToInvoice(
 
   sale.invoiceId = invoice._id
   await sale.save()
+
+  await createDeliveryNote({
+    saleId: slip.saleId,
+    invoiceId: invoice._id,
+    customerId: slip.customerId,
+    customerName: slip.customerName,
+    customerAddress: slip.customerAddress,
+    lines: slip.lines as Parameters<typeof createDeliveryNote>[0]['lines'],
+    includeTva: slip.includeTva ?? false,
+    linkToInvoice: true,
+    blNumber: slip.blNumber || invoice.reference,
+    bcNumber: slip.bcNumber,
+    pieceNumber: slip.pieceNumber,
+    representative: slip.representative,
+    deliveryPerson: slip.deliveryPerson,
+    validUntil: slip.validUntil,
+    amountPaid: invoice.amountPaid,
+    amountDue: 0,
+    isSettled: true
+  })
 
   return invoice
 }

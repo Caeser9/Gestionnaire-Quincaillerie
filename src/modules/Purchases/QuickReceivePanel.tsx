@@ -9,7 +9,7 @@ import { formatCurrency } from '@renderer/lib/format'
 import { roundMoney } from '@shared/utils'
 import type { PaginatedResult } from '@shared/types'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Minus, Package, Plus, Trash2, Zap } from 'lucide-react'
+import { AlertTriangle, Minus, Package, Plus, Trash2, Zap } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 
@@ -43,6 +43,11 @@ interface QuickReceivePanelProps {
   onSuccess?: () => void
 }
 
+function restockQuantity(product: Product): number {
+  const min = product.minStock ?? 0
+  return Math.max(1, min - product.stock)
+}
+
 export function QuickReceivePanel({ onSuccess }: QuickReceivePanelProps) {
   const queryClient = useQueryClient()
   const searchRef = useRef<HTMLInputElement>(null)
@@ -60,10 +65,16 @@ export function QuickReceivePanel({ onSuccess }: QuickReceivePanelProps) {
     queryFn: () => apiRequest<PaginatedResult<Supplier>>('/suppliers?limit=200')
   })
 
+  const { data: restockProducts, isLoading: restockLoading } = useQuery({
+    queryKey: ['stock-alerts'],
+    queryFn: () => apiRequest<Product[]>('/stock/alerts')
+  })
+
   const productQuery = useMemo(() => {
     const params = new URLSearchParams({ limit: '80' })
     if (debouncedSearch) params.set('search', debouncedSearch)
     if (supplierId && !showAllProducts) params.set('supplierId', supplierId)
+    if (!showAllProducts) params.set('lowStock', 'true')
     return params.toString()
   }, [debouncedSearch, supplierId, showAllProducts])
 
@@ -73,12 +84,25 @@ export function QuickReceivePanel({ onSuccess }: QuickReceivePanelProps) {
     enabled: !!supplierId
   })
 
-  const addToCart = useCallback((product: Product) => {
+  const filteredRestockProducts = useMemo(() => {
+    const list = restockProducts ?? []
+    const q = debouncedSearch.trim().toLowerCase()
+    if (!q) return list
+    return list.filter(
+      (p) =>
+        p.designation.toLowerCase().includes(q) ||
+        p.reference.toLowerCase().includes(q) ||
+        (p.barcode && p.barcode.includes(q))
+    )
+  }, [restockProducts, debouncedSearch])
+
+  const addToCart = useCallback((product: Product, quantity?: number) => {
+    const qty = quantity ?? 1
     setCart((prev) => {
       const existing = prev.find((l) => l.productId === product._id)
       if (existing) {
         return prev.map((l) =>
-          l.productId === product._id ? { ...l, quantity: l.quantity + 1 } : l
+          l.productId === product._id ? { ...l, quantity: l.quantity + qty } : l
         )
       }
       return [
@@ -87,7 +111,7 @@ export function QuickReceivePanel({ onSuccess }: QuickReceivePanelProps) {
           productId: product._id,
           designation: product.designation,
           reference: product.reference,
-          quantity: 1,
+          quantity: qty,
           unitPrice: product.purchasePrice,
           unit: product.unit
         }
@@ -102,7 +126,7 @@ export function QuickReceivePanel({ onSuccess }: QuickReceivePanelProps) {
     const exact = products.data.find(
       (p) => p.barcode && p.barcode === debouncedSearch.trim()
     )
-    if (exact) addToCart(exact)
+    if (exact) addToCart(exact, restockQuantity(exact))
   }, [debouncedSearch, products?.data, addToCart])
 
   const receiveMutation = useMutation({
@@ -126,6 +150,8 @@ export function QuickReceivePanel({ onSuccess }: QuickReceivePanelProps) {
       queryClient.invalidateQueries({ queryKey: ['purchase-orders'] })
       queryClient.invalidateQueries({ queryKey: ['products'] })
       queryClient.invalidateQueries({ queryKey: ['suppliers'] })
+      queryClient.invalidateQueries({ queryKey: ['stock-alerts'] })
+      queryClient.invalidateQueries({ queryKey: ['stock-valuation'] })
       toast.success('Réception enregistrée — stock mis à jour')
       setCart([])
       setNotes('')
@@ -188,23 +214,67 @@ export function QuickReceivePanel({ onSuccess }: QuickReceivePanelProps) {
             </div>
           </div>
 
+          <SearchInput
+            ref={searchRef}
+            value={search}
+            onChange={setSearch}
+            onClear={() => setSearch('')}
+            placeholder="Rechercher ou scanner code-barres... (F2)"
+            loading={restockLoading || productsLoading}
+            size="large"
+          />
+
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-800/50 dark:bg-amber-900/20">
+            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-amber-800 dark:text-amber-200">
+              <AlertTriangle size={16} />
+              Produits à alimenter ({filteredRestockProducts.length})
+            </h3>
+            {restockLoading ? (
+              <p className="text-sm text-amber-700 dark:text-amber-300">Chargement…</p>
+            ) : filteredRestockProducts.length === 0 ? (
+              <p className="text-sm text-amber-700 dark:text-amber-300">Aucun produit sous le stock minimum.</p>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 max-h-[280px] overflow-y-auto">
+                {filteredRestockProducts.map((p) => {
+                  const qtyNeeded = restockQuantity(p)
+                  return (
+                    <button
+                      key={p._id}
+                      type="button"
+                      onClick={() => {
+                        if (!supplierId) {
+                          toast.error('Sélectionnez d’abord un fournisseur')
+                          return
+                        }
+                        addToCart(p, qtyNeeded)
+                      }}
+                      className="rounded-lg border border-amber-200 bg-white p-3 text-left transition hover:border-amber-400 hover:shadow-sm dark:border-amber-800 dark:bg-slate-900"
+                    >
+                      <p className="text-xs font-mono text-slate-400 truncate">{p.reference}</p>
+                      <p className="text-sm font-medium truncate">{p.designation}</p>
+                      <div className="mt-1 flex justify-between text-xs">
+                        <span className="text-red-600 font-semibold">Stock: {p.stock}</span>
+                        <span className="text-amber-700 font-medium">+{qtyNeeded}</span>
+                      </div>
+                      <p className="text-[10px] text-slate-500">Min: {p.minStock ?? 0}</p>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
           {supplierId ? (
             <>
-              <SearchInput
-                ref={searchRef}
-                value={search}
-                onChange={setSearch}
-                onClear={() => setSearch('')}
-                placeholder="Rechercher ou scanner code-barres... (F2)"
-                loading={productsLoading}
-                size="large"
-              />
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 max-h-[420px] overflow-y-auto">
+              <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                {showAllProducts ? 'Catalogue fournisseur' : 'Produits à alimenter (fournisseur sélectionné)'}
+              </h3>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 max-h-[320px] overflow-y-auto">
                 {products?.data?.map((p) => (
                   <button
                     key={p._id}
                     type="button"
-                    onClick={() => addToCart(p)}
+                    onClick={() => addToCart(p, showAllProducts ? 1 : restockQuantity(p))}
                     className="card-hover p-3 text-left"
                   >
                     <p className="text-xs font-mono text-slate-400 truncate">{p.reference}</p>
@@ -214,7 +284,9 @@ export function QuickReceivePanel({ onSuccess }: QuickReceivePanelProps) {
                       <span>Stock: {p.stock}</span>
                     </div>
                     {p.minStock !== undefined && p.stock <= p.minStock && (
-                      <span className="text-[10px] text-amber-600 font-medium">Stock bas</span>
+                      <span className="text-[10px] text-amber-600 font-medium">
+                        À alimenter: +{restockQuantity(p)}
+                      </span>
                     )}
                   </button>
                 ))}
@@ -226,7 +298,7 @@ export function QuickReceivePanel({ onSuccess }: QuickReceivePanelProps) {
                   description={
                     showAllProducts
                       ? 'Aucun produit trouvé pour cette recherche'
-                      : 'Aucun produit lié à ce fournisseur — cochez « tous les produits » ou liez des produits au fournisseur'
+                      : 'Aucun produit à alimenter pour ce fournisseur — cochez « tous les produits »'
                   }
                 />
               )}
@@ -235,7 +307,7 @@ export function QuickReceivePanel({ onSuccess }: QuickReceivePanelProps) {
             <EmptyState
               icon={<Zap size={24} />}
               title="Sélectionnez un fournisseur"
-              description="Choisissez le fournisseur pour afficher ses produits et saisir la réception"
+              description="Choisissez le fournisseur pour valider la réception. La liste des produits à alimenter est visible ci-dessus."
             />
           )}
         </div>
@@ -258,7 +330,7 @@ export function QuickReceivePanel({ onSuccess }: QuickReceivePanelProps) {
         <div className="flex-1 overflow-y-auto space-y-2 mb-3">
           {cart.length === 0 ? (
             <p className="text-sm text-slate-400 text-center py-8">
-              Cliquez sur un produit pour l&apos;ajouter
+              Cliquez sur un produit à alimenter pour l&apos;ajouter
             </p>
           ) : (
             cart.map((line) => (
@@ -277,48 +349,62 @@ export function QuickReceivePanel({ onSuccess }: QuickReceivePanelProps) {
                     className="text-slate-400 hover:text-red-500 shrink-0"
                   >
                     <Trash2 size={14} />
-                  </button>
+                  </button>                  
                 </div>
-                <div className="flex items-center gap-2 mt-2">
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      className="btn-ghost btn-sm p-1"
-                      onClick={() =>
-                        updateLine(line.productId, 'quantity', Math.max(1, line.quantity - 1))
-                      }
-                    >
-                      <Minus size={14} />
-                    </button>
-                    <input
-                      type="number"
-                      min={1}
-                      value={line.quantity}
-                      onChange={(e) =>
-                        updateLine(line.productId, 'quantity', Math.max(1, +e.target.value))
-                      }
-                      className="input w-14 text-center py-1 text-sm"
-                    />
-                    <button
-                      type="button"
-                      className="btn-ghost btn-sm p-1"
-                      onClick={() => updateLine(line.productId, 'quantity', line.quantity + 1)}
-                    >
-                      <Plus size={14} />
-                    </button>
-                    <span className="text-xs text-slate-400">{line.unit}</span>
+                
+                <div className="flex items-start gap-4 mt-2">
+                  
+                  <div className="flex flex-col gap-1">
+                    <label htmlFor={`qty-${line.productId}`} className="text-xs font-medium text-slate-600 dark:text-slate-400">Quantité</label>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        className="btn-ghost btn-sm p-1"
+                        onClick={() =>
+                          updateLine(line.productId, 'quantity', Math.max(1, line.quantity - 1))
+                        }
+                      >
+                        <Minus size={14} />
+                      </button>
+                      
+                      <input
+                        id={`qty-${line.productId}`}
+                        type="number"
+                        min={1}
+                        value={line.quantity}
+                        onChange={(e) =>
+                          updateLine(line.productId, 'quantity', Math.max(1, +e.target.value))
+                        }
+                        className="input w-24 text-sm ml-auto font-mono tabular-nums text-right"
+                        style={{ width: '6rem' }}
+                      />
+                      <button
+                        type="button"
+                        className="btn-ghost btn-sm p-1"
+                        onClick={() => updateLine(line.productId, 'quantity', line.quantity + 1)}
+                      >
+                        <Plus size={14} />
+                      </button>
+                      <span className="text-xs text-slate-400">{line.unit}</span>
+                    </div>
                   </div>
-                  <input
-                    type="number"
-                    step="0.001"
-                    min={0}
-                    value={line.unitPrice}
-                    onChange={(e) =>
-                      updateLine(line.productId, 'unitPrice', Math.max(0, +e.target.value))
-                    }
-                    className="input w-24 text-sm ml-auto"
-                    title="Prix unitaire HT"
-                  />
+                  
+                  <div className="flex flex-col gap-1">
+                    <label htmlFor={`price-${line.productId}`} className="text-xs font-medium text-slate-600 dark:text-slate-400">Prix HT</label>
+                    <input
+                      id={`price-${line.productId}`}
+                      type="number"
+                      step="0.001"
+                      min={0}
+                      value={line.unitPrice}
+                      onChange={(e) =>
+                        updateLine(line.productId, 'unitPrice', Math.max(0, +e.target.value))
+                      }
+                      style={{width:'10rem'}}
+                      className="input w-24 text-sm ml-auto font-mono tabular-nums text-right"
+                      title="Prix unitaire HT"
+                    />
+                  </div>
                 </div>
                 <p className="text-xs text-right text-slate-500 mt-1">
                   {formatCurrency(line.quantity * line.unitPrice)}
@@ -371,7 +457,8 @@ export function QuickReceivePanel({ onSuccess }: QuickReceivePanelProps) {
 
           <div className="flex justify-between items-center font-semibold">
             <span>{itemCount} article(s)</span>
-            <span className="text-lg text-primary-600">{formatCurrency(totalHT)} HT</span>
+            <span className="text-lg text-primary-600">Total à payer</span>
+            <span className="text-lg text-primary-600">{formatCurrency(totalHT)}</span>
           </div>
 
           <Button

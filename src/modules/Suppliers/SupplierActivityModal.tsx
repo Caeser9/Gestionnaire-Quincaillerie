@@ -16,6 +16,7 @@ import {
   Wallet
 } from 'lucide-react'
 import { useState } from 'react'
+import Pagination from '@renderer/components/ui/Pagination'
 import toast from 'react-hot-toast'
 
 interface Supplier {
@@ -148,6 +149,9 @@ export function SupplierActivityModal({ supplier, onClose }: SupplierActivityMod
 
   const activities =
     data?.activities.filter((a) => filter === 'all' || a.type === filter) ?? []
+
+  const [productsPage, setProductsPage] = useState(1)
+  const PAGE_SIZE = 10
 
   const openPayment = () => {
     setPaymentAmount(String(data?.summary.balance ?? supplier.balance))
@@ -391,7 +395,7 @@ export function SupplierActivityModal({ supplier, onClose }: SupplierActivityMod
                     </tr>
                   </thead>
                   <tbody>
-                    {data.products.map((p) => (
+                    {(data.products ?? []).slice((productsPage - 1) * PAGE_SIZE, productsPage * PAGE_SIZE).map((p) => (
                       <tr key={p._id}>
                         <td className="font-mono text-xs">{p.reference}</td>
                         <td>{p.designation}</td>
@@ -410,6 +414,7 @@ export function SupplierActivityModal({ supplier, onClose }: SupplierActivityMod
                     description="Aucun produit lié à ce fournisseur"
                   />
                 )}
+                <Pagination current={productsPage} totalPages={Math.max(1, Math.ceil((data.products?.length ?? 0)/PAGE_SIZE))} onChange={(p) => setProductsPage(p)} />
               </div>
             )}
           </div>

@@ -15,6 +15,7 @@ interface LicenseContextValue {
   loading: boolean
   isActive: boolean
   authorizedModules: string[]
+  dashboardMode: 'pro' | 'simple'
   refresh: (forceOnline?: boolean) => Promise<void>
   isRouteAllowed: (path: string) => boolean
 }
@@ -52,16 +53,15 @@ export function LicenseProvider({ children }: { children: ReactNode }) {
       void refresh(true)
     }
 
-    const interval = window.setInterval(syncLicense, 86400_000)
     window.addEventListener('online', syncLicense)
 
     return () => {
-      window.clearInterval(interval)
       window.removeEventListener('online', syncLicense)
     }
   }, [refresh])
 
   const authorizedModules = status?.authorizedModules ?? []
+  const dashboardMode = status?.payload?.dashboardMode === 'simple' ? 'simple' : 'pro'
 
   const isRouteAllowed = useCallback(
     (path: string) => {
@@ -79,10 +79,11 @@ export function LicenseProvider({ children }: { children: ReactNode }) {
       loading,
       isActive: status?.status === 'active',
       authorizedModules,
+      dashboardMode,
       refresh,
       isRouteAllowed
     }),
-    [status, loading, authorizedModules, refresh, isRouteAllowed]
+    [status, loading, authorizedModules, dashboardMode, refresh, isRouteAllowed]
   )
 
   return <LicenseContext.Provider value={value}>{children}</LicenseContext.Provider>

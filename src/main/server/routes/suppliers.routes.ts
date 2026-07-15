@@ -127,7 +127,7 @@ async function applyPurchaseReceive(
     await StockMovement.create({
       productId: product._id,
       type: 'in',
-      reason: 'purchase',
+      reason: 'achat',
       quantity: line.quantity,
       stockBefore,
       stockAfter: product.stock,

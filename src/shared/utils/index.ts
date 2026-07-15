@@ -16,21 +16,15 @@ export function calculateTVA(ht: number, tvaRate: number): number {
   return roundMoney(ht * (tvaRate / 100))
 }
 
-export function calculateFodec(htBase: number, ratePercent = 1): number {
-  if (htBase <= 0) return 0
-  return roundMoney(htBase * (ratePercent / 100))
-}
-
 export interface SaleTotalsInput {
   totalHT: number
   totalTVA: number
-  totalFodec: number
   timbreFiscal: number
 }
 
 export function calculateGrandTotal(totals: SaleTotalsInput): number {
   return roundMoney(
-    totals.totalHT + totals.totalFodec + totals.totalTVA + totals.timbreFiscal
+    totals.totalHT + totals.totalTVA + totals.timbreFiscal
   )
 }
 
@@ -121,4 +115,50 @@ export function getDayBounds(date: Date = new Date()): { start: Date; end: Date 
   const end = new Date(date)
   end.setHours(23, 59, 59, 999)
   return { start, end }
+}
+
+export interface DocumentLineInput {
+  designation: string
+  quantity: number
+  unitPrice: number
+  discount?: number
+  tva?: number
+  totalHT: number
+  totalTTC: number
+}
+
+export interface DocumentTotalsInput {
+  includeTva?: boolean
+  timbreFiscal?: number
+}
+
+export function mergeDocumentLines(lines: DocumentLineInput[]): DocumentLineInput[] {
+  const merged = new Map<string, DocumentLineInput>()
+
+  for (const line of lines) {
+    const key = `${line.designation}::${line.unitPrice}::${line.discount ?? 0}`
+    const existing = merged.get(key)
+    if (!existing) {
+      merged.set(key, { ...line, quantity: Number(line.quantity || 0) })
+      continue
+    }
+
+    existing.quantity += Number(line.quantity || 0)
+    existing.totalHT = roundMoney(existing.totalHT + line.totalHT)
+    existing.totalTTC = roundMoney(existing.totalTTC + line.totalTTC)
+  }
+
+  return Array.from(merged.values())
+}
+
+export function buildDocumentTotals(
+  lines: DocumentLineInput[],
+  options: DocumentTotalsInput = {}
+): { totalHT: number; totalTVA: number; totalTTC: number; timbreFiscal: number } {
+  const totalHT = roundMoney(lines.reduce((sum, line) => sum + (line.totalHT || 0), 0))
+  const totalTVA = options.includeTva ? roundMoney(lines.reduce((sum, line) => sum + ((line.totalTTC || 0) - (line.totalHT || 0)), 0)) : 0
+  const timbreFiscal = options.timbreFiscal ?? 0
+  const totalTTC = roundMoney(totalHT + totalTVA + timbreFiscal)
+
+  return { totalHT, totalTVA, totalTTC, timbreFiscal }
 }

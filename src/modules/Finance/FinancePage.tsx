@@ -9,6 +9,7 @@ import { formatCurrency, formatDate } from '@renderer/lib/format'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { DollarSign, Plus, Trash2, TrendingDown, TrendingUp } from 'lucide-react'
 import { useState } from 'react'
+import Pagination from '@renderer/components/ui/Pagination'
 import toast from 'react-hot-toast'
 
 const EXPENSE_CATEGORIES = [
@@ -83,10 +84,13 @@ export default function FinancePage() {
       toast.success('Dépense supprimée')
     }
   })
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 10
 
   return (
     <div className="space-y-5">
       <PageHeader
+        back
         title="Recettes, Dépenses & Bénéfices"
         subtitle="Vision globale de la santé financière de votre activité"
         actions={
@@ -189,7 +193,7 @@ export default function FinancePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data?.expenses?.map((e) => (
+                  {(data?.expenses ?? []).slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map((e) => (
                     <tr key={e._id}>
                       <td>{formatDate(e.date)}</td>
                       <td className="font-medium">{e.label}</td>
@@ -222,6 +226,7 @@ export default function FinancePage() {
                 </tbody>
               </table>
             </div>
+            <Pagination current={page} totalPages={Math.max(1, Math.ceil((data?.expenses?.length ?? 0)/PAGE_SIZE))} onChange={(p) => setPage(p)} />
           </div>
         </>
       )}
@@ -248,6 +253,7 @@ export default function FinancePage() {
           label="Montant"
           type="number"
           step="0.001"
+          className="input-number"
           value={form.amount}
           onChange={(e) => setForm({ ...form, amount: +e.target.value })}
         />

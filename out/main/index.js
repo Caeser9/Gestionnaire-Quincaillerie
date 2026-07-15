@@ -30,6 +30,7 @@ const pdfLib = require("pdf-lib");
 const zod = require("zod");
 const XLSX = require("xlsx");
 const fs = require("fs/promises");
+const child_process = require("child_process");
 const crypto = require("crypto");
 const os = require("os");
 const Store = require("electron-store");
@@ -60,6 +61,8 @@ const REFERENCE_PREFIXES = {
   invoice: "FAC",
   purchaseOrder: "BC",
   purchaseSlip: "BA",
+  deliveryNote: "BL",
+  quote: "DEV",
   inventory: "INV"
 };
 const REFERENCE_PAD = 6;
@@ -69,7 +72,6 @@ const DEFAULT_SETTINGS = {
   companyPhone: "",
   defaultTva: 19,
   currency: "DT",
-  invoiceFormat: "FAC-{year}-{number}",
   mongoUri: DEFAULT_MONGO_URI
 };
 const TIMBRE_FISCAL_AMOUNT = 1;
@@ -98,7 +100,7 @@ const productSchema$1 = new mongoose.Schema(
     barcode: { type: String, sparse: true, index: true },
     designation: { type: String, required: true, index: true },
     description: String,
-    categoryId: { type: mongoose.Schema.Types.ObjectId, ref: "Category", required: true },
+    categoryId: { type: mongoose.Schema.Types.ObjectId, ref: "Category" },
     subCategoryId: { type: mongoose.Schema.Types.ObjectId, ref: "SubCategory" },
     brand: String,
     supplierId: { type: mongoose.Schema.Types.ObjectId, ref: "Supplier" },
@@ -107,7 +109,6 @@ const productSchema$1 = new mongoose.Schema(
     profitMargin: { type: Number, required: true, default: 25 },
     discount: { type: Number, required: true, default: 0 },
     tva: { type: Number, required: true, default: 19 },
-    subjectToFodec: { type: Boolean, default: false },
     stock: { type: Number, required: true, default: 0 },
     minStock: { type: Number, required: true, default: 0 },
     unit: { type: String, required: true, default: "pièce" },
@@ -157,6 +158,7 @@ const customerSchema$1 = new mongoose.Schema(
     phone: String,
     address: String,
     email: String,
+    matricule: String,
     creditBalance: { type: Number, default: 0 },
     totalPurchases: { type: Number, default: 0 },
     isDeleted: { type: Boolean, default: false }
@@ -223,7 +225,7 @@ const supplierInvoiceSchema = new mongoose.Schema(
 );
 const saleLineSchema = new mongoose.Schema(
   {
-    productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
+    productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product" },
     reference: String,
     designation: String,
     quantity: Number,
@@ -241,11 +243,11 @@ const saleSchema$1 = new mongoose.Schema(
     invoiceId: { type: mongoose.Schema.Types.ObjectId, ref: "Invoice" },
     purchaseSlipId: { type: mongoose.Schema.Types.ObjectId, ref: "PurchaseSlip" },
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: "Customer" },
+    customerAddress: String,
     cashierId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     lines: [saleLineSchema],
     totalHT: { type: Number, default: 0 },
     totalTVA: { type: Number, default: 0 },
-    totalFodec: { type: Number, default: 0 },
     timbreFiscal: { type: Number, default: 0 },
     totalTTC: { type: Number, default: 0 },
     amountPaid: { type: Number, default: 0 },
@@ -255,6 +257,12 @@ const saleSchema$1 = new mongoose.Schema(
       enum: ["cash", "card", "mixed", "credit"],
       required: true
     },
+    bcNumber: String,
+    blNumber: String,
+    pieceNumber: String,
+    representative: String,
+    deliveryPerson: String,
+    validUntil: Date,
     cashReceived: Number,
     cardAmount: Number,
     change: Number,
@@ -266,19 +274,36 @@ const saleSchema$1 = new mongoose.Schema(
 const purchaseSlipSchema = new mongoose.Schema(
   {
     reference: { type: String, required: true, unique: true },
-    saleId: { type: mongoose.Schema.Types.ObjectId, ref: "Sale", required: true },
+    documentType: {
+      type: String,
+      enum: ["delivery_note", "purchase_slip"],
+      default: "purchase_slip"
+    },
+    saleId: { type: mongoose.Schema.Types.ObjectId, ref: "Sale", default: null },
+    sourceInvoiceId: { type: mongoose.Schema.Types.ObjectId, ref: "Invoice" },
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: "Customer" },
     customerName: String,
+    customerAddress: String,
+    customerMatricule: String,
     lines: [saleLineSchema],
     totalHT: { type: Number, default: 0 },
     totalTVA: { type: Number, default: 0 },
-    totalFodec: { type: Number, default: 0 },
     timbreFiscal: { type: Number, default: 0 },
     totalTTC: { type: Number, default: 0 },
     amountPaid: { type: Number, default: 0 },
     amountDue: { type: Number, default: 0 },
     isSettled: { type: Boolean, default: false },
     convertedInvoiceId: { type: mongoose.Schema.Types.ObjectId, ref: "Invoice" },
+    bcNumber: String,
+    blNumber: String,
+    pieceNumber: String,
+    representative: String,
+    deliveryPerson: String,
+    deliveryDriverName: String,
+    deliveryDriverCin: String,
+    deliveryVehiclePlate: String,
+    vehicleRegistration: String,
+    validUntil: Date,
     includeTva: { type: Boolean, default: false }
   },
   { timestamps: true }
@@ -286,18 +311,24 @@ const purchaseSlipSchema = new mongoose.Schema(
 const invoiceSchema = new mongoose.Schema(
   {
     reference: { type: String, required: true, unique: true },
-    saleId: { type: mongoose.Schema.Types.ObjectId, ref: "Sale", required: true },
+    saleId: { type: mongoose.Schema.Types.ObjectId, ref: "Sale" },
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: "Customer" },
     customerName: String,
+    customerAddress: String,
     lines: [saleLineSchema],
     totalHT: { type: Number, default: 0 },
     totalTVA: { type: Number, default: 0 },
-    totalFodec: { type: Number, default: 0 },
     timbreFiscal: { type: Number, default: 0 },
     totalTTC: { type: Number, default: 0 },
     amountPaid: { type: Number, default: 0 },
     amountDue: { type: Number, default: 0 },
     isPaid: { type: Boolean, default: true },
+    bcNumber: String,
+    blNumber: String,
+    pieceNumber: String,
+    representative: String,
+    deliveryPerson: String,
+    validUntil: Date,
     includeTva: { type: Boolean, default: false }
   },
   { timestamps: true }
@@ -326,7 +357,7 @@ const stockMovementSchema = new mongoose.Schema(
     type: { type: String, enum: ["in", "out"], required: true },
     reason: {
       type: String,
-      enum: ["purchase", "sale", "correction", "inventory"],
+      enum: ["achat", "vente", "correction", "inventaire"],
       required: true
     },
     quantity: { type: Number, required: true },
@@ -360,10 +391,13 @@ const settingsSchema$1 = new mongoose.Schema(
     companyName: { type: String, required: true, default: "Ma Quincaillerie" },
     companyAddress: String,
     companyPhone: String,
+    companyFax: String,
+    companyMatriculeFiscal: String,
+    companyTvaCode: String,
+    companyRC: String,
     companyLogo: String,
     defaultTva: { type: Number, default: 19 },
     currency: { type: String, default: "DT" },
-    invoiceFormat: { type: String, default: "FAC-{year}-{number}" },
     mongoUri: { type: String, default: "mongodb://127.0.0.1:27017/quincaillerie" }
   },
   { timestamps: true }
@@ -411,6 +445,38 @@ const SupplierInvoice = mongoose.models.SupplierInvoice ?? mongoose.model("Suppl
 const Sale = mongoose.models.Sale ?? mongoose.model("Sale", saleSchema$1);
 const PurchaseSlip = mongoose.models.PurchaseSlip ?? mongoose.model("PurchaseSlip", purchaseSlipSchema);
 const Invoice = mongoose.models.Invoice ?? mongoose.model("Invoice", invoiceSchema);
+const quoteLineSchema = new mongoose.Schema(
+  {
+    productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product" },
+    reference: String,
+    designation: String,
+    quantity: Number,
+    unitPrice: Number,
+    discount: { type: Number, default: 0 },
+    tva: Number,
+    totalHT: Number,
+    totalTVA: Number,
+    totalTTC: Number
+  },
+  { _id: false }
+);
+const quoteSchema = new mongoose.Schema(
+  {
+    reference: { type: String, required: true, unique: true },
+    customerId: { type: mongoose.Schema.Types.ObjectId, ref: "Customer" },
+    customerName: String,
+    customerAddress: String,
+    lines: [quoteLineSchema],
+    totalHT: { type: Number, default: 0 },
+    totalTVA: { type: Number, default: 0 },
+    timbreFiscal: { type: Number, default: 0 },
+    totalTTC: { type: Number, default: 0 },
+    includeTva: { type: Boolean, default: false },
+    validUntil: Date
+  },
+  { timestamps: true }
+);
+const Quote = mongoose.models.Quote ?? mongoose.model("Quote", quoteSchema);
 const Payment = mongoose.models.Payment ?? mongoose.model("Payment", paymentSchema$1);
 const StockMovement = mongoose.models.StockMovement ?? mongoose.model("StockMovement", stockMovementSchema);
 const InventoryAdjustment = mongoose.models.InventoryAdjustment ?? mongoose.model("InventoryAdjustment", inventoryAdjustmentSchema);
@@ -497,41 +563,181 @@ function attachActor(req, _res, next) {
 function getActorId(req) {
   return req.actorId || SYSTEM_USER_ID.toString();
 }
-const PAGE_W = 595;
-const PAGE_H = 842;
-const MARGIN = 40;
-const CONTENT_W = PAGE_W - MARGIN * 2;
-const FOOTER_ZONE = 160;
-const TABLE = {
-  designation: { x: MARGIN, w: 215 },
-  qty: { x: MARGIN + 218, w: 32 },
-  pu: { x: MARGIN + 253, w: 62 },
-  ht: { x: MARGIN + 318, w: 72 },
-  ttc: { x: MARGIN + 393, w: CONTENT_W - 393 }
+const MM_TO_PT = 72 / 25.4;
+const PAGE_WIDTH = 210 * MM_TO_PT;
+const PAGE_HEIGHT = 297 * MM_TO_PT;
+const MARGIN = 12 * MM_TO_PT;
+const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
+const FOOTER_Y = 10 * MM_TO_PT;
+const FOOTER_HEIGHT = 20 * MM_TO_PT;
+const FOOTER_BOX_GAP = 8;
+const WORDS_SECTION_HEIGHT = 14 * MM_TO_PT;
+const TOTALS_BOX_HEIGHT = 46 * MM_TO_PT;
+const TOTALS_BOX_WIDTH = 200;
+const TAX_BOX_WIDTH = 240;
+const TAX_BOX_HEIGHT = 14 * MM_TO_PT;
+const HEADER_GAP = 8;
+const SUMMARY_GAP = 6;
+const COLORS = {
+  black: pdfLib.rgb(0, 0, 0),
+  darkGray: pdfLib.rgb(0.15, 0.15, 0.15),
+  mediumGray: pdfLib.rgb(0.35, 0.35, 0.35),
+  lightGray: pdfLib.rgb(0.94, 0.94, 0.94),
+  invoiceBlue: pdfLib.rgb(0.08, 0.18, 0.55)
 };
-const FONT_SIZE = 9;
-const LINE_GAP = 13;
-const CELL_PAD_TOP = 10;
-const CELL_PAD_BOTTOM = 10;
-const ROW_H_SINGLE = CELL_PAD_TOP + FONT_SIZE + CELL_PAD_BOTTOM;
-const ROW_H_MULTILINE = CELL_PAD_TOP + FONT_SIZE + LINE_GAP + FONT_SIZE + CELL_PAD_BOTTOM;
+const FONT_SIZES = {
+  title: 32,
+  meta: 10,
+  value: 8.5,
+  tableHeader: 7.5,
+  tableRow: 8,
+  totalLabel: 8.5,
+  totalValue: 9,
+  netValue: 11,
+  footerLabel: 8,
+  boxLabel: 7.5,
+  boxValue: 11,
+  boxCompanyName: 12
+};
+const TABLE_COLUMN_WIDTHS = {
+  number: 22,
+  reference: 68,
+  designation: 168,
+  qte: 32,
+  puht: 52,
+  mht: 52,
+  rm: 26,
+  tva: 28
+};
+const TABLE_FIXED_WIDTH = Object.values(TABLE_COLUMN_WIDTHS).reduce((sum, value) => sum + value, 0);
+const TABLE_NET_WIDTH = Math.max(CONTENT_WIDTH - TABLE_FIXED_WIDTH, 48);
+const TABLE_COLUMNS = {
+  number: { x: MARGIN, w: TABLE_COLUMN_WIDTHS.number },
+  reference: { x: MARGIN + TABLE_COLUMN_WIDTHS.number, w: TABLE_COLUMN_WIDTHS.reference },
+  designation: { x: MARGIN + TABLE_COLUMN_WIDTHS.number + TABLE_COLUMN_WIDTHS.reference, w: TABLE_COLUMN_WIDTHS.designation },
+  qte: { x: MARGIN + TABLE_COLUMN_WIDTHS.number + TABLE_COLUMN_WIDTHS.reference + TABLE_COLUMN_WIDTHS.designation, w: TABLE_COLUMN_WIDTHS.qte },
+  puht: { x: MARGIN + TABLE_COLUMN_WIDTHS.number + TABLE_COLUMN_WIDTHS.reference + TABLE_COLUMN_WIDTHS.designation + TABLE_COLUMN_WIDTHS.qte, w: TABLE_COLUMN_WIDTHS.puht },
+  mht: { x: MARGIN + TABLE_COLUMN_WIDTHS.number + TABLE_COLUMN_WIDTHS.reference + TABLE_COLUMN_WIDTHS.designation + TABLE_COLUMN_WIDTHS.qte + TABLE_COLUMN_WIDTHS.puht, w: TABLE_COLUMN_WIDTHS.mht },
+  rm: { x: MARGIN + TABLE_COLUMN_WIDTHS.number + TABLE_COLUMN_WIDTHS.reference + TABLE_COLUMN_WIDTHS.designation + TABLE_COLUMN_WIDTHS.qte + TABLE_COLUMN_WIDTHS.puht + TABLE_COLUMN_WIDTHS.mht, w: TABLE_COLUMN_WIDTHS.rm },
+  tva: { x: MARGIN + TABLE_COLUMN_WIDTHS.number + TABLE_COLUMN_WIDTHS.reference + TABLE_COLUMN_WIDTHS.designation + TABLE_COLUMN_WIDTHS.qte + TABLE_COLUMN_WIDTHS.puht + TABLE_COLUMN_WIDTHS.mht + TABLE_COLUMN_WIDTHS.rm, w: TABLE_COLUMN_WIDTHS.tva },
+  net: {
+    x: MARGIN + TABLE_COLUMN_WIDTHS.number + TABLE_COLUMN_WIDTHS.reference + TABLE_COLUMN_WIDTHS.designation + TABLE_COLUMN_WIDTHS.qte + TABLE_COLUMN_WIDTHS.puht + TABLE_COLUMN_WIDTHS.mht + TABLE_COLUMN_WIDTHS.rm + TABLE_COLUMN_WIDTHS.tva,
+    w: TABLE_NET_WIDTH
+  }
+};
+const TABLE_ROW_HEIGHT = 18;
+const TABLE_HEADER_HEIGHT = 22;
+const FOOTER_FONT_SIZE = FONT_SIZES.footerLabel;
+function computeSummaryLayout() {
+  const footerBottom = FOOTER_Y;
+  const wordsBottom = footerBottom + FOOTER_HEIGHT + SUMMARY_GAP;
+  const wordsTop = wordsBottom + WORDS_SECTION_HEIGHT;
+  const summaryBottom = wordsTop + SUMMARY_GAP;
+  const summaryTop = summaryBottom + TOTALS_BOX_HEIGHT;
+  const tableBottom = summaryTop + SUMMARY_GAP;
+  return { footerBottom, wordsBottom, wordsTop, summaryBottom, summaryTop, tableBottom };
+}
 function sanitizePdfText(text) {
   return text.replace(/\u2212|\u2013|\u2014/g, "-").replace(/\u2026/g, "...").replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"').replace(/\u00A0/g, " ");
 }
-function fmt(amount, currency) {
-  return `${amount.toFixed(3)} ${currency}`;
+function fmt3(amount) {
+  return (amount ?? 0).toFixed(3);
+}
+function fmt2(amount) {
+  return (amount ?? 0).toFixed(2).replace(".", ",");
+}
+function fmtQty(quantity) {
+  return Number.isInteger(quantity) ? String(quantity) : quantity.toFixed(3);
 }
 function textWidth(font, text, size) {
   return font.widthOfTextAtSize(sanitizePdfText(text), size);
 }
-function truncate(font, text, size, maxW) {
-  const safe = sanitizePdfText(text);
-  if (textWidth(font, safe, size) <= maxW) return safe;
-  let s = safe;
-  while (s.length > 1 && textWidth(font, s + "...", size) > maxW) {
-    s = s.slice(0, -1);
+function drawLeft(page2, text, x, y, font, size, color = COLORS.black) {
+  page2.drawText(sanitizePdfText(text), { x, y, size, font, color });
+}
+function drawRight(page2, text, x, width, y, font, size, color = COLORS.black) {
+  const w = textWidth(font, text, size);
+  page2.drawText(sanitizePdfText(text), { x: x + width - w, y, size, font, color });
+}
+function drawCenter(page2, text, x, width, y, font, size, color = COLORS.black) {
+  const w = textWidth(font, text, size);
+  page2.drawText(sanitizePdfText(text), { x: x + (width - w) / 2, y, size, font, color });
+}
+function drawLine(page2, x1, y1, x2, y2, thickness = 0.5, color = COLORS.black) {
+  page2.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness, color });
+}
+function drawBox(page2, x, y, width, height, borderColor = COLORS.black, borderWidth = 0.7) {
+  page2.drawRectangle({
+    x,
+    y,
+    width,
+    height,
+    borderColor,
+    borderWidth,
+    color: pdfLib.rgb(1, 1, 1)
+  });
+}
+function resolveDeliveryInfo(inv) {
+  const driverName = inv.deliveryDriverName || inv.deliveryPerson || inv.representative || "";
+  const driverCin = inv.deliveryDriverCin || "";
+  const plate = inv.deliveryVehiclePlate || inv.vehicleRegistration || "";
+  return { driverName, driverCin, plate };
+}
+function drawBoxLabelValue(page2, x, y, label, value, font, fontBold, maxWidth) {
+  const labelText = `${label.toUpperCase()} :`;
+  drawLeft(page2, labelText, x, y, font, FONT_SIZES.boxLabel, COLORS.mediumGray);
+  const labelWidth = textWidth(font, `${labelText} `, FONT_SIZES.boxLabel);
+  const valueText = sanitizePdfText((value || "—").toUpperCase());
+  const valueLines = wrapLines(fontBold, valueText, FONT_SIZES.boxValue, Math.max(maxWidth - labelWidth - 4, 40));
+  drawLeft(page2, valueLines[0], x + labelWidth + 2, y - 0.5, fontBold, FONT_SIZES.boxValue, COLORS.black);
+  if (valueLines[1]) {
+    drawLeft(page2, valueLines[1], x, y - 13, fontBold, FONT_SIZES.boxValue, COLORS.black);
+    return y - 26;
   }
-  return s + "...";
+  return y - 15;
+}
+function buildSellerFields(cfg) {
+  const fields = [];
+  if (cfg.companyAddress?.trim()) fields.push({ label: "Adresse", value: cfg.companyAddress.trim() });
+  if (cfg.companyPhone?.trim()) fields.push({ label: "Téléphone", value: cfg.companyPhone.trim() });
+  if (cfg.companyFax?.trim()) fields.push({ label: "Fax", value: cfg.companyFax.trim() });
+  if (cfg.companyRC?.trim()) fields.push({ label: "Registre de commerce", value: cfg.companyRC.trim() });
+  if (cfg.companyTvaCode?.trim()) fields.push({ label: "Code TVA", value: cfg.companyTvaCode.trim() });
+  return fields;
+}
+function buildCustomerFields(inv) {
+  const fields = [];
+  if (inv.customerCode?.trim()) fields.push({ label: "Code", value: inv.customerCode.trim() });
+  fields.push({ label: "Client", value: inv.customerName || "Client comptant" });
+  if (inv.customerAddress?.trim()) fields.push({ label: "Adresse", value: inv.customerAddress.trim() });
+  if (inv.customerMatricule?.trim()) {
+    fields.push({ label: "Mat. fiscale / Code TVA", value: inv.customerMatricule.trim() });
+  } else if (inv.customerTvaCode?.trim()) {
+    fields.push({ label: "Code TVA", value: inv.customerTvaCode.trim() });
+  }
+  return fields;
+}
+function estimatePartyBoxHeight(fieldCount) {
+  return Math.max(88, 36 + fieldCount * 16);
+}
+function drawPartyBox(page2, x, topY, width, height, sectionTitle, mainName, fields, font, fontBold) {
+  const innerPad = 6;
+  const innerWidth = width - innerPad * 2;
+  drawBox(page2, x, topY - height, width, height);
+  drawLeft(page2, sectionTitle, x + innerPad, topY - 12, fontBold, FONT_SIZES.boxLabel, COLORS.mediumGray);
+  drawLeft(
+    page2,
+    (mainName || "—").toUpperCase(),
+    x + innerPad,
+    topY - 26,
+    fontBold,
+    FONT_SIZES.boxCompanyName,
+    COLORS.black
+  );
+  let y = topY - 40;
+  for (const field of fields) {
+    y = drawBoxLabelValue(page2, x + innerPad, y, field.label, field.value, font, fontBold, innerWidth);
+  }
 }
 function wrapLines(font, text, size, maxW) {
   const safe = sanitizePdfText(text);
@@ -542,180 +748,398 @@ function wrapLines(font, text, size, maxW) {
     const candidate = current ? `${current} ${word}` : word;
     if (textWidth(font, candidate, size) <= maxW) {
       current = candidate;
-    } else {
-      if (current) lines.push(current);
-      current = textWidth(font, word, size) > maxW ? truncate(font, word, size, maxW) : word;
+      continue;
     }
+    if (current) {
+      lines.push(current);
+    }
+    current = textWidth(font, word, size) > maxW ? truncate(font, word, size, maxW) : word;
   }
   if (current) lines.push(current);
   return lines.length ? lines.slice(0, 2) : [""];
 }
-function drawLeft(page2, text, x, y, font, size, color = pdfLib.rgb(0.1, 0.1, 0.1)) {
-  page2.drawText(sanitizePdfText(text), { x, y, size, font, color });
+function truncate(font, text, size, maxW) {
+  const safe = sanitizePdfText(text);
+  if (textWidth(font, safe, size) <= maxW) return safe;
+  let truncated = safe;
+  while (truncated.length > 1 && textWidth(font, `${truncated}...`, size) > maxW) {
+    truncated = truncated.slice(0, -1);
+  }
+  return `${truncated}...`;
 }
-function drawRight(page2, text, colX, colW, y, font, size, color = pdfLib.rgb(0.1, 0.1, 0.1)) {
-  const w = textWidth(font, text, size);
-  page2.drawText(sanitizePdfText(text), { x: colX + colW - w, y, size, font, color });
+function formatDate(value) {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("fr-FR");
 }
-function drawHLine(page2, y, x1 = MARGIN, x2 = PAGE_W - MARGIN) {
-  page2.drawLine({
-    start: { x: x1, y },
-    end: { x: x2, y },
-    thickness: 0.5,
-    color: pdfLib.rgb(0.82, 0.82, 0.82)
+const SMALL_NUMBERS = [
+  "zero",
+  "un",
+  "deux",
+  "trois",
+  "quatre",
+  "cinq",
+  "six",
+  "sept",
+  "huit",
+  "neuf",
+  "dix",
+  "onze",
+  "douze",
+  "treize",
+  "quatorze",
+  "quinze",
+  "seize"
+];
+function numberToFrenchWords(value) {
+  if (value < 17) return SMALL_NUMBERS[value];
+  if (value < 20) return `dix-${SMALL_NUMBERS[value - 10]}`;
+  if (value < 70) {
+    const tensNames = {
+      20: "vingt",
+      30: "trente",
+      40: "quarante",
+      50: "cinquante",
+      60: "soixante"
+    };
+    const ten = Math.floor(value / 10) * 10;
+    const unit = value % 10;
+    if (unit === 0) return tensNames[ten];
+    if (unit === 1) return `${tensNames[ten]} et un`;
+    return `${tensNames[ten]}-${SMALL_NUMBERS[unit]}`;
+  }
+  if (value < 80) return `soixante-${numberToFrenchWords(value - 60)}`;
+  if (value < 100) {
+    if (value === 80) return "quatre-vingts";
+    return `quatre-vingt-${numberToFrenchWords(value - 80)}`;
+  }
+  if (value < 1e3) {
+    const hundred = Math.floor(value / 100);
+    const rest2 = value % 100;
+    const prefix2 = hundred === 1 ? "cent" : `${SMALL_NUMBERS[hundred]} cent`;
+    return rest2 === 0 ? prefix2 : `${prefix2} ${numberToFrenchWords(rest2)}`;
+  }
+  const thousand = Math.floor(value / 1e3);
+  const rest = value % 1e3;
+  const prefix = thousand === 1 ? "mille" : `${numberToFrenchWords(thousand)} mille`;
+  return rest === 0 ? prefix : `${prefix} ${numberToFrenchWords(rest)}`;
+}
+function amountToWords(amount, currency) {
+  const main = Math.floor(amount);
+  const millimes = Math.round((amount - main) * 1e3);
+  const currencyLabel = currency.toUpperCase() === "DT" ? "dinars" : currency.toLowerCase();
+  const base = `${numberToFrenchWords(main)} ${currencyLabel}`;
+  if (millimes <= 0) return base;
+  return `${base} ${numberToFrenchWords(millimes)} millimes`;
+}
+function getAmountWordsPrefix(title) {
+  if (title === "BON DE LIVRAISON") return "Arrêté Le Présent Bon de Livraison à La Somme de ";
+  if (title === "DEVIS") return "Arrêté Le Présent Devis à La Somme de ";
+  return "Arrêté La Présente Facture à La Somme de ";
+}
+function shouldShowDeliveryBand(title) {
+  return title === "FACTURE" || title === "BON DE LIVRAISON";
+}
+function createPage(doc) {
+  return doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+}
+function createContext(doc, page2, font, fontBold, fontSerif) {
+  return { doc, page: page2, font, fontBold, fontSerif, y: PAGE_HEIGHT - MARGIN };
+}
+function drawPageNumbers(doc, font, size) {
+  const pages = doc.getPages();
+  pages.forEach((page2, index) => {
+    if (pages.length <= 1) return;
+    const text = `Page ${index + 1} / ${pages.length}`;
+    const width = textWidth(font, text, size);
+    drawLeft(page2, text, PAGE_WIDTH - MARGIN - width, FOOTER_Y - 8, font, size, COLORS.mediumGray);
   });
 }
-function addPage(ctx) {
-  const page2 = ctx.doc.addPage([PAGE_W, PAGE_H]);
-  return { ...ctx, page: page2, y: PAGE_H - MARGIN };
+function drawInvoiceHeader(ctx, inv, title) {
+  const { page: page2, font, fontBold, fontSerif } = ctx;
+  const titleFont = fontSerif ?? fontBold;
+  const titleY = ctx.y;
+  drawLeft(page2, title, MARGIN, titleY, titleFont, FONT_SIZES.title, COLORS.invoiceBlue);
+  drawLeft(page2, `Numéro ${inv.reference || "—"}`, MARGIN, titleY - 22, fontBold, FONT_SIZES.meta, COLORS.black);
+  drawLeft(page2, `DU: ${formatDate(inv.createdAt) || "—"}`, MARGIN, titleY - 36, font, FONT_SIZES.meta, COLORS.black);
+  return { ...ctx, y: titleY - 52 };
 }
-function ensureSpace(ctx, needed, repeatHeader = false) {
-  if (ctx.y - needed < MARGIN + FOOTER_ZONE) {
-    const newCtx = addPage(ctx);
-    return repeatHeader ? drawTableHeader(newCtx) : newCtx;
+function drawCompanyAndCustomerBoxes(ctx, inv, cfg) {
+  const { page: page2, font, fontBold } = ctx;
+  const boxGap = 8;
+  const boxWidth = (CONTENT_WIDTH - boxGap) / 2;
+  const leftBoxX = MARGIN;
+  const rightBoxX = MARGIN + boxWidth + boxGap;
+  const topY = ctx.y;
+  const sellerFields = buildSellerFields(cfg);
+  const customerFields = buildCustomerFields(inv);
+  const boxHeight = Math.max(
+    estimatePartyBoxHeight(sellerFields.length),
+    estimatePartyBoxHeight(customerFields.length)
+  );
+  drawPartyBox(
+    page2,
+    leftBoxX,
+    topY,
+    boxWidth,
+    boxHeight,
+    "VENDEUR",
+    cfg.companyName || "—",
+    sellerFields,
+    font,
+    fontBold
+  );
+  drawPartyBox(
+    page2,
+    rightBoxX,
+    topY,
+    boxWidth,
+    boxHeight,
+    "CLIENT",
+    inv.customerName || "Client comptant",
+    customerFields.filter((field) => field.label.toLowerCase() !== "client"),
+    font,
+    fontBold
+  );
+  return { ...ctx, y: topY - boxHeight - HEADER_GAP };
+}
+function drawDeliveryBand(ctx, inv) {
+  const { page: page2, font, fontBold } = ctx;
+  const bandHeight = 20;
+  const bandY = ctx.y;
+  drawBox(page2, MARGIN, bandY - bandHeight, CONTENT_WIDTH, bandHeight, COLORS.black, 0.5);
+  const blNumber = inv.blNumber || inv.reference || "";
+  const blDate = formatDate(inv.createdAt);
+  drawLeft(
+    page2,
+    `B.LIVRAISON N° ${blNumber} DU: ${blDate}`,
+    MARGIN + 6,
+    bandY - 14,
+    fontBold,
+    FONT_SIZES.value,
+    COLORS.black
+  );
+  drawLeft(
+    page2,
+    `CMDE N° ${inv.pieceNumber || inv.bcNumber || ""}`.trimEnd(),
+    PAGE_WIDTH - MARGIN - 120,
+    bandY - 14,
+    fontBold,
+    FONT_SIZES.value,
+    COLORS.black
+  );
+  return { ...ctx, y: bandY - bandHeight - HEADER_GAP };
+}
+function drawTableHeader(ctx) {
+  const { page: page2, fontBold } = ctx;
+  const topY = ctx.y;
+  drawBox(page2, MARGIN, topY - TABLE_HEADER_HEIGHT, CONTENT_WIDTH, TABLE_HEADER_HEIGHT, COLORS.black, 0.5);
+  const headerY = topY - 15;
+  drawCenter(page2, "N/L", TABLE_COLUMNS.number.x, TABLE_COLUMNS.number.w, headerY, fontBold, FONT_SIZES.tableHeader);
+  drawCenter(page2, "REFERENCES", TABLE_COLUMNS.reference.x, TABLE_COLUMNS.reference.w, headerY, fontBold, FONT_SIZES.tableHeader);
+  drawCenter(page2, "DESIGNATIONS", TABLE_COLUMNS.designation.x, TABLE_COLUMNS.designation.w, headerY, fontBold, FONT_SIZES.tableHeader);
+  drawCenter(page2, "QTE", TABLE_COLUMNS.qte.x, TABLE_COLUMNS.qte.w, headerY, fontBold, FONT_SIZES.tableHeader);
+  drawCenter(page2, "P.U.H.T", TABLE_COLUMNS.puht.x, TABLE_COLUMNS.puht.w, headerY, fontBold, FONT_SIZES.tableHeader);
+  drawCenter(page2, "REM", TABLE_COLUMNS.rm.x, TABLE_COLUMNS.rm.w, headerY, fontBold, FONT_SIZES.tableHeader);
+  drawCenter(page2, "M.H.T", TABLE_COLUMNS.mht.x, TABLE_COLUMNS.mht.w, headerY, fontBold, FONT_SIZES.tableHeader);
+  drawCenter(page2, "TVA", TABLE_COLUMNS.tva.x, TABLE_COLUMNS.tva.w, headerY, fontBold, FONT_SIZES.tableHeader);
+  drawCenter(page2, "MONTANT TTC", TABLE_COLUMNS.net.x, TABLE_COLUMNS.net.w, headerY, fontBold, FONT_SIZES.tableHeader);
+  drawTableColumnLines(page2, topY, topY - TABLE_HEADER_HEIGHT);
+  return { ...ctx, y: topY - TABLE_HEADER_HEIGHT };
+}
+function drawTableColumnLines(page2, topY, bottomY) {
+  [
+    TABLE_COLUMNS.reference.x,
+    TABLE_COLUMNS.designation.x,
+    TABLE_COLUMNS.qte.x,
+    TABLE_COLUMNS.puht.x,
+    TABLE_COLUMNS.rm.x,
+    TABLE_COLUMNS.mht.x,
+    TABLE_COLUMNS.tva.x,
+    TABLE_COLUMNS.net.x,
+    PAGE_WIDTH - MARGIN
+  ].forEach((x) => drawLine(page2, x, bottomY, x, topY, 0.5, COLORS.black));
+}
+function drawTableRow(ctx, line, lineNumber) {
+  const { page: page2, font } = ctx;
+  const rowTop = ctx.y;
+  const rowBottom = rowTop - TABLE_ROW_HEIGHT;
+  drawLine(page2, MARGIN, rowBottom, PAGE_WIDTH - MARGIN, rowBottom, 0.5, COLORS.black);
+  const netHT = line.totalHT;
+  const lineTTC = line.totalTTC ?? netHT;
+  const rowY = rowTop - 13;
+  drawCenter(page2, String(lineNumber), TABLE_COLUMNS.number.x, TABLE_COLUMNS.number.w, rowY, font, FONT_SIZES.tableRow);
+  drawLeft(
+    page2,
+    truncate(font, line.reference || "", FONT_SIZES.tableRow, TABLE_COLUMNS.reference.w - 4),
+    TABLE_COLUMNS.reference.x + 3,
+    rowY,
+    font,
+    FONT_SIZES.tableRow
+  );
+  drawLeft(
+    page2,
+    truncate(font, line.designation, FONT_SIZES.tableRow, TABLE_COLUMNS.designation.w - 6),
+    TABLE_COLUMNS.designation.x + 3,
+    rowY,
+    font,
+    FONT_SIZES.tableRow
+  );
+  drawCenter(page2, fmtQty(line.quantity), TABLE_COLUMNS.qte.x, TABLE_COLUMNS.qte.w, rowY, font, FONT_SIZES.tableRow);
+  drawRight(page2, fmt3(line.unitPrice), TABLE_COLUMNS.puht.x, TABLE_COLUMNS.puht.w - 3, rowY, font, FONT_SIZES.tableRow);
+  drawCenter(page2, `${line.discount ?? 0}`, TABLE_COLUMNS.rm.x, TABLE_COLUMNS.rm.w, rowY, font, FONT_SIZES.tableRow);
+  drawRight(page2, fmt3(line.totalHT), TABLE_COLUMNS.mht.x, TABLE_COLUMNS.mht.w - 3, rowY, font, FONT_SIZES.tableRow);
+  drawCenter(page2, `${line.tva ?? 19}`, TABLE_COLUMNS.tva.x, TABLE_COLUMNS.tva.w, rowY, font, FONT_SIZES.tableRow);
+  drawRight(page2, fmt3(lineTTC), TABLE_COLUMNS.net.x, TABLE_COLUMNS.net.w - 4, rowY, font, FONT_SIZES.tableRow);
+  drawTableColumnLines(page2, rowTop, rowBottom);
+  return { ...ctx, y: rowBottom };
+}
+function drawTableGridFiller(ctx, tableBottom) {
+  const { page: page2 } = ctx;
+  if (ctx.y <= tableBottom) return;
+  drawLine(page2, MARGIN, tableBottom, PAGE_WIDTH - MARGIN, tableBottom, 0.5, COLORS.black);
+  drawTableColumnLines(page2, ctx.y, tableBottom);
+  drawLine(page2, MARGIN, tableBottom, MARGIN, ctx.y, 0.5, COLORS.black);
+  drawLine(page2, PAGE_WIDTH - MARGIN, tableBottom, PAGE_WIDTH - MARGIN, ctx.y, 0.5, COLORS.black);
+}
+function startContinuationPage(ctx) {
+  const newPage = createPage(ctx.doc);
+  const newCtx = createContext(ctx.doc, newPage, ctx.font, ctx.fontBold, ctx.fontSerif);
+  return drawTableHeader(newCtx);
+}
+function ensureTableSpace(ctx, tableBottom) {
+  if (ctx.y - TABLE_ROW_HEIGHT < tableBottom) {
+    drawTableGridFiller(ctx, tableBottom);
+    return startContinuationPage(ctx);
   }
   return ctx;
 }
-function drawTableHeader(ctx) {
-  const { page: page2, fontBold, y } = ctx;
-  page2.drawRectangle({
-    x: MARGIN,
-    y: y - 6,
-    width: CONTENT_W,
-    height: 22,
-    color: pdfLib.rgb(0.94, 0.94, 0.94)
-  });
-  const hy = y;
-  drawLeft(page2, "Désignation", TABLE.designation.x + 4, hy, fontBold, 8);
-  drawRight(page2, "Qté", TABLE.qty.x, TABLE.qty.w, hy, fontBold, 8);
-  drawRight(page2, "P.U. HT", TABLE.pu.x, TABLE.pu.w, hy, fontBold, 8);
-  drawRight(page2, "Total HT", TABLE.ht.x, TABLE.ht.w, hy, fontBold, 8);
-  drawRight(page2, "Total TTC", TABLE.ttc.x, TABLE.ttc.w, hy, fontBold, 8);
-  const headerBottom = y - 22;
-  drawHLine(page2, headerBottom, MARGIN, PAGE_W - MARGIN);
-  return { ...ctx, y: headerBottom - 4 };
+function drawTaxBox(page2, font, fontBold, inv, layout) {
+  const boxX = MARGIN;
+  const boxY = layout.summaryBottom + TOTALS_BOX_HEIGHT - TAX_BOX_HEIGHT;
+  drawBox(page2, boxX, boxY, TAX_BOX_WIDTH, TAX_BOX_HEIGHT, COLORS.black, 0.5);
+  drawLine(page2, boxX, boxY + TAX_BOX_HEIGHT - 16, boxX + TAX_BOX_WIDTH, boxY + TAX_BOX_HEIGHT - 16, 0.5, COLORS.black);
+  drawLine(page2, boxX + 88, boxY, boxX + 88, boxY + TAX_BOX_HEIGHT, 0.5, COLORS.black);
+  drawLine(page2, boxX + 148, boxY, boxX + 148, boxY + TAX_BOX_HEIGHT, 0.5, COLORS.black);
+  drawLeft(page2, "BASE TAXABLE", boxX + 4, boxY + TAX_BOX_HEIGHT - 12, fontBold, FONT_SIZES.value, COLORS.black);
+  drawLeft(page2, "TAUX", boxX + 94, boxY + TAX_BOX_HEIGHT - 12, fontBold, FONT_SIZES.value, COLORS.black);
+  drawLeft(page2, "MONTANT TVA", boxX + 154, boxY + TAX_BOX_HEIGHT - 12, fontBold, FONT_SIZES.value, COLORS.black);
+  const vatRate = inv.includeTva ? "19.00" : "0.00";
+  drawLeft(page2, fmt3(inv.totalHT), boxX + 4, boxY + 4, font, FONT_SIZES.value, COLORS.black);
+  drawCenter(page2, vatRate, boxX + 88, 60, boxY + 4, font, FONT_SIZES.value, COLORS.black);
+  drawRight(page2, fmt3(inv.totalTVA), boxX + 148, TAX_BOX_WIDTH - 148, boxY + 4, font, FONT_SIZES.value, COLORS.black);
 }
-function drawTotalsBlock(ctx, inv, cfg, title) {
-  let { page: page2, font, fontBold, y } = ctx;
-  const currency = cfg.currency;
-  const blockW = 230;
-  const blockX = PAGE_W - MARGIN - blockW;
-  const labelX = blockX;
-  const valueW = 95;
-  const valueX = blockX + blockW - valueW;
-  y -= 8;
-  drawHLine(page2, y, blockX, PAGE_W - MARGIN);
-  y -= 18;
-  const drawTotalRow = (label, value, bold = false, valueColor = pdfLib.rgb(0.1, 0.1, 0.1)) => {
-    const f = bold ? fontBold : font;
-    const sz = bold ? 10 : 9;
-    drawLeft(page2, label, labelX, y, f, sz);
-    drawRight(page2, value, valueX, valueW, y, f, sz, valueColor);
-    y -= bold ? 18 : 15;
-  };
-  drawTotalRow("Total HT", fmt(inv.totalHT, currency));
-  if ((inv.totalFodec ?? 0) > 0) {
-    drawTotalRow("FODEC (1%)", fmt(inv.totalFodec, currency));
-  }
-  if (inv.includeTva) {
-    drawTotalRow("TVA", fmt(inv.totalTVA, currency));
-  }
+function drawTotalsBox(page2, font, fontBold, inv, cfg, title, layout) {
+  const boxX = PAGE_WIDTH - MARGIN - TOTALS_BOX_WIDTH;
+  const boxY = layout.summaryBottom;
+  drawBox(page2, boxX, boxY, TOTALS_BOX_WIDTH, TOTALS_BOX_HEIGHT, COLORS.black, 0.5);
   const isInvoice = title === "FACTURE";
   const timbreAmount = isInvoice ? (inv.timbreFiscal ?? 0) > 0 ? inv.timbreFiscal : TIMBRE_FISCAL_AMOUNT : inv.timbreFiscal ?? 0;
+  const rows = [
+    ["TOTAL HT", fmt3(inv.totalHT), false],
+    ["REMISE", fmt2(0), false],
+    ["TOTAL NET HT", fmt2(inv.totalHT), false],
+    ["MONTANT TVA", fmt2(inv.totalTVA), false]
+  ];
   if (isInvoice || timbreAmount > 0) {
-    drawTotalRow("Timbre fiscal", fmt(timbreAmount, currency));
+    rows.push(["TIMBRE", fmt2(timbreAmount), false]);
   }
-  drawTotalRow("TOTAL TTC", fmt(inv.totalTTC, currency), true);
-  y -= 4;
-  drawHLine(page2, y + 10, blockX, PAGE_W - MARGIN);
-  const paidLabel = title === "BON D'ACHAT" ? "Montant payé" : "Somme versée";
-  drawTotalRow(paidLabel, fmt(inv.amountPaid, currency), false, pdfLib.rgb(0.1, 0.45, 0.2));
-  const dueColor = inv.amountDue > 0 ? pdfLib.rgb(0.75, 0.15, 0.15) : pdfLib.rgb(0.1, 0.45, 0.2);
-  drawTotalRow("Reste à payer", fmt(inv.amountDue, currency), true, dueColor);
-  return { ...ctx, y };
+  rows.push(["TOTAL TTC", fmt2(inv.totalTTC), true]);
+  let rowY = boxY + TOTALS_BOX_HEIGHT - 14;
+  rows.forEach(([label, value, bold]) => {
+    drawLeft(page2, label, boxX + 6, rowY, bold ? fontBold : font, FONT_SIZES.totalLabel, COLORS.black);
+    drawRight(page2, value, boxX + 6, TOTALS_BOX_WIDTH - 12, rowY, bold ? fontBold : font, FONT_SIZES.totalLabel, COLORS.black);
+    rowY -= 13;
+  });
+  const netY = boxY + 6;
+  const netValue = fmt3(inv.totalTTC);
+  drawLeft(page2, "NET A PAYER", boxX + 6, netY + 10, fontBold, FONT_SIZES.totalValue, COLORS.black);
+  drawRight(page2, netValue, boxX + 6, TOTALS_BOX_WIDTH - 12, netY + 10, fontBold, FONT_SIZES.netValue, COLORS.black);
+  textWidth(fontBold, netValue, FONT_SIZES.netValue);
+}
+function drawAmountInWords(page2, font, inv, cfg, layout, title) {
+  const prefix = getAmountWordsPrefix(title);
+  const words = amountToWords(inv.totalTTC, cfg.currency);
+  const fullText = `${prefix}${words}`;
+  const maxWidth = CONTENT_WIDTH - TOTALS_BOX_WIDTH - 16;
+  const wrapped = wrapLines(font, fullText, FONT_SIZES.value, maxWidth);
+  let lineY = layout.wordsTop - 10;
+  wrapped.slice(0, 2).forEach((line) => {
+    drawLeft(page2, line, MARGIN, lineY, font, FONT_SIZES.value, COLORS.black);
+    lineY -= 11;
+  });
+}
+function drawFooterBoxes(page2, font, fontBold, inv, layout) {
+  const footerY = layout.footerBottom;
+  const boxWidth = (CONTENT_WIDTH - FOOTER_BOX_GAP * 2) / 3;
+  const { driverName, driverCin, plate } = resolveDeliveryInfo(inv);
+  const boxes = [
+    {
+      label: "LIVREUR",
+      lines: [driverName, driverCin ? `CIN : ${driverCin}` : ""].filter(Boolean)
+    },
+    {
+      label: "MATRICULE VEHICULE",
+      lines: [plate].filter(Boolean)
+    },
+    { label: "SIGNATURE / CACHET", lines: [] }
+  ];
+  boxes.forEach((box, index) => {
+    const boxX = MARGIN + index * (boxWidth + FOOTER_BOX_GAP);
+    drawBox(page2, boxX, footerY, boxWidth, FOOTER_HEIGHT, COLORS.black, 0.5);
+    drawLeft(page2, box.label, boxX + 6, footerY + FOOTER_HEIGHT - 14, fontBold, FOOTER_FONT_SIZE, COLORS.black);
+    let lineY = footerY + FOOTER_HEIGHT - 28;
+    box.lines.forEach((line) => {
+      drawLeft(page2, line.toUpperCase(), boxX + 6, lineY, fontBold, FONT_SIZES.boxValue, COLORS.black);
+      lineY -= 13;
+    });
+  });
+}
+function drawQuoteValidityNote(page2, fontBold, inv, layout) {
+  if (!inv.validUntil) return;
+  const text = `Valable jusqu'au : ${formatDate(inv.validUntil)}`;
+  drawLeft(page2, text, MARGIN, layout.wordsTop + 4, fontBold, FONT_SIZES.value, COLORS.black);
+}
+function drawSummarySection(page2, font, fontBold, inv, cfg, title, layout) {
+  drawTaxBox(page2, font, fontBold, inv, layout);
+  drawTotalsBox(page2, font, fontBold, inv, cfg, title, layout);
+  drawAmountInWords(page2, font, inv, cfg, layout, title);
+  drawFooterBoxes(page2, font, fontBold, inv, layout);
+}
+function createInvoicePage(doc, font, fontBold, fontSerif, inv, cfg, title) {
+  const page2 = createPage(doc);
+  let ctx = createContext(doc, page2, font, fontBold, fontSerif);
+  ctx = drawInvoiceHeader(ctx, inv, title);
+  ctx = drawCompanyAndCustomerBoxes(ctx, inv, cfg);
+  if (shouldShowDeliveryBand(title)) {
+    ctx = drawDeliveryBand(ctx, inv);
+  }
+  ctx = drawTableHeader(ctx);
+  return ctx;
 }
 async function generateInvoicePdf(invoice, settings, title = "FACTURE") {
   const inv = "toObject" in invoice ? invoice.toObject() : invoice;
   const cfg = "toObject" in settings ? settings.toObject() : settings;
-  const isInvoice = title === "FACTURE";
-  const titleColor = isInvoice ? pdfLib.rgb(0.85, 0.35, 0.08) : pdfLib.rgb(0.15, 0.38, 0.72);
   const doc = await pdfLib.PDFDocument.create();
   const font = await doc.embedFont(pdfLib.StandardFonts.Helvetica);
   const fontBold = await doc.embedFont(pdfLib.StandardFonts.HelveticaBold);
-  let ctx = {
-    doc,
-    page: doc.addPage([PAGE_W, PAGE_H]),
-    font,
-    fontBold,
-    y: PAGE_H - MARGIN
-  };
-  const { page: page2 } = ctx;
-  const companyLines = [cfg.companyName];
-  if (cfg.companyAddress) companyLines.push(cfg.companyAddress);
-  if (cfg.companyPhone) companyLines.push(`Tél : ${cfg.companyPhone}`);
-  let leftY = ctx.y;
-  companyLines.forEach((line, i) => {
-    const f = i === 0 ? fontBold : font;
-    const sz = i === 0 ? 14 : 9;
-    const display = i === 0 ? truncate(fontBold, line, sz, 280) : truncate(font, line, sz, 280);
-    drawLeft(page2, display, MARGIN, leftY, f, sz, pdfLib.rgb(0.15, 0.15, 0.15));
-    leftY -= i === 0 ? 18 : 13;
+  const fontSerif = await doc.embedFont(pdfLib.StandardFonts.TimesRomanBold);
+  const layout = computeSummaryLayout();
+  const continuationTableBottom = MARGIN + 20;
+  let ctx = createInvoicePage(doc, font, fontBold, fontSerif, inv, cfg, title);
+  inv.lines.forEach((line, index) => {
+    const isLastLine = index === inv.lines.length - 1;
+    const tableBottom = isLastLine ? layout.tableBottom : continuationTableBottom;
+    ctx = ensureTableSpace(ctx, tableBottom);
+    ctx = drawTableRow(ctx, line, index + 1);
   });
-  const rightBlockX = PAGE_W - MARGIN - 200;
-  let rightY = PAGE_H - MARGIN;
-  drawLeft(page2, title, rightBlockX, rightY, fontBold, 16, titleColor);
-  rightY -= 20;
-  drawLeft(page2, `N° ${inv.reference}`, rightBlockX, rightY, fontBold, 10);
-  rightY -= 14;
-  drawLeft(
-    page2,
-    `Date : ${new Date(inv.createdAt).toLocaleDateString("fr-FR")}`,
-    rightBlockX,
-    rightY,
-    font,
-    9,
-    pdfLib.rgb(0.4, 0.4, 0.4)
-  );
-  ctx.y = Math.min(leftY, rightY) - 20;
-  drawHLine(ctx.page, ctx.y);
-  ctx.y -= 22;
-  drawLeft(ctx.page, "CLIENT", MARGIN, ctx.y, fontBold, 7, pdfLib.rgb(0.55, 0.55, 0.55));
-  ctx.y -= 13;
-  const clientName = inv.customerName || "Client comptant";
-  drawLeft(ctx.page, truncate(fontBold, clientName, 12, CONTENT_W), MARGIN, ctx.y, fontBold, 12);
-  ctx.y -= 28;
-  ctx = drawTableHeader(ctx);
-  for (const line of inv.lines) {
-    const discountLabel = line.discount && line.discount > 0 ? ` (-${line.discount}%)` : "";
-    const designation = line.designation + discountLabel;
-    const wrapped = wrapLines(ctx.font, designation, FONT_SIZE, TABLE.designation.w - 8);
-    const isMultiline = wrapped.length > 1;
-    const rowH = isMultiline ? ROW_H_MULTILINE : ROW_H_SINGLE;
-    ctx = ensureSpace(ctx, rowH + 2, true);
-    const textY = ctx.y - CELL_PAD_TOP;
-    wrapped.forEach((ln, i) => {
-      drawLeft(ctx.page, ln, TABLE.designation.x + 4, textY - i * LINE_GAP, ctx.font, FONT_SIZE);
-    });
-    const numsY = isMultiline ? textY - LINE_GAP / 2 : textY;
-    drawRight(ctx.page, String(line.quantity), TABLE.qty.x, TABLE.qty.w, numsY, ctx.font, FONT_SIZE);
-    drawRight(ctx.page, line.unitPrice.toFixed(3), TABLE.pu.x, TABLE.pu.w, numsY, ctx.font, FONT_SIZE);
-    drawRight(ctx.page, line.totalHT.toFixed(3), TABLE.ht.x, TABLE.ht.w, numsY, ctx.font, FONT_SIZE);
-    drawRight(ctx.page, line.totalTTC.toFixed(3), TABLE.ttc.x, TABLE.ttc.w, numsY, ctx.font, FONT_SIZE);
-    ctx.y -= rowH;
-    drawHLine(ctx.page, ctx.y, MARGIN, PAGE_W - MARGIN);
+  drawTableGridFiller(ctx, layout.tableBottom);
+  if (title === "DEVIS") {
+    drawQuoteValidityNote(ctx.page, fontBold, inv, layout);
   }
-  ctx = ensureSpace(ctx, FOOTER_ZONE);
-  ctx = drawTotalsBlock(ctx, inv, cfg, title);
-  const footerY = MARGIN - 10;
-  drawLeft(
-    ctx.page,
-    `${cfg.companyName} — ${title} ${inv.reference}`,
-    MARGIN,
-    footerY,
-    ctx.font,
-    7,
-    pdfLib.rgb(0.6, 0.6, 0.6)
-  );
+  drawSummarySection(ctx.page, font, fontBold, inv, cfg, title, layout);
+  drawPageNumbers(doc, font, 8);
   return doc.save();
 }
 async function generatePurchaseSlipPdf(slip, settings) {
@@ -757,10 +1181,6 @@ function generatePurchaseSlipEscPos(slip, settings) {
   lines.push("--------------------------------\n");
   lines.push(`HT: ${s.totalHT.toFixed(3)} ${cfg.currency}
 `);
-  if ((s.totalFodec ?? 0) > 0) {
-    lines.push(`FODEC: ${s.totalFodec.toFixed(3)} ${cfg.currency}
-`);
-  }
   if (s.includeTva) {
     lines.push(`TVA: ${s.totalTVA.toFixed(3)} ${cfg.currency}
 `);
@@ -775,7 +1195,7 @@ function generatePurchaseSlipEscPos(slip, settings) {
 `);
   lines.push(`${ESC}!\bRESTE: ${s.amountDue.toFixed(3)} ${cfg.currency}
 `);
-  lines.push(`${ESC}!\0`);
+  lines.push("--------------------------------\n");
   lines.push("\n\n\n");
   lines.push(`${GS}V\0`);
   return Buffer.from(lines.join(""), "binary");
@@ -815,10 +1235,6 @@ function generateReceiptEscPos(invoice, settings) {
   lines.push("--------------------------------\n");
   lines.push(`HT: ${inv.totalHT.toFixed(3)} ${cfg.currency}
 `);
-  if ((inv.totalFodec ?? 0) > 0) {
-    lines.push(`FODEC: ${inv.totalFodec.toFixed(3)} ${cfg.currency}
-`);
-  }
   if (inv.includeTva) {
     lines.push(`TVA: ${inv.totalTVA.toFixed(3)} ${cfg.currency}
 `);
@@ -836,21 +1252,43 @@ function generateReceiptEscPos(invoice, settings) {
   lines.push(`${GS}V\0`);
   return Buffer.from(lines.join(""), "binary");
 }
-const router$8 = express.Router();
-router$8.use(attachActor);
-router$8.get("/invoices/:id/pdf", asyncHandler(async (req, res) => {
+const router$a = express.Router();
+router$a.use(attachActor);
+async function enrichInvoiceForPdf(invoice) {
+  const data = invoice.toObject();
+  if (invoice.customerId) {
+    const customer = await Customer.findById(invoice.customerId);
+    if (customer) {
+      data.customerCode = customer.reference;
+      data.customerMatricule = data.customerMatricule || customer.matricule;
+    }
+  }
+  const deliveryNote = await PurchaseSlip.findOne({
+    documentType: "delivery_note",
+    $or: [{ sourceInvoiceId: invoice._id }, { convertedInvoiceId: invoice._id }]
+  }).sort({ createdAt: -1 });
+  if (deliveryNote) {
+    data.deliveryDriverName = deliveryNote.deliveryDriverName || deliveryNote.deliveryPerson;
+    data.deliveryDriverCin = deliveryNote.deliveryDriverCin;
+    data.deliveryVehiclePlate = deliveryNote.deliveryVehiclePlate || deliveryNote.vehicleRegistration;
+    data.deliveryPerson = deliveryNote.deliveryPerson || data.deliveryPerson;
+    data.vehicleRegistration = deliveryNote.vehicleRegistration || deliveryNote.deliveryVehiclePlate;
+  }
+  return data;
+}
+router$a.get("/invoices/:id/pdf", asyncHandler(async (req, res) => {
   const invoice = await Invoice.findById(req.params.id);
   if (!invoice) {
     sendError(res, "Facture introuvable", 404);
     return;
   }
   const settings = await Settings.findOne() ?? await Settings.create({});
-  const pdfBytes = await generateInvoicePdf(invoice, settings);
+  const pdfBytes = await generateInvoicePdf(await enrichInvoiceForPdf(invoice), settings);
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", `attachment; filename=${invoice.reference}.pdf`);
   res.send(Buffer.from(pdfBytes));
 }));
-router$8.get("/purchase-slips/:id/pdf", asyncHandler(async (req, res) => {
+router$a.get("/purchase-slips/:id/pdf", asyncHandler(async (req, res) => {
   const slip = await PurchaseSlip.findById(req.params.id);
   if (!slip) {
     sendError(res, "Bon d'achat introuvable", 404);
@@ -883,16 +1321,11 @@ const productSchema = zod.z.object({
   barcode: zod.z.string().optional(),
   designation: zod.z.string().min(1, "Désignation requise"),
   description: zod.z.string().optional(),
-  categoryId: zod.z.string().min(1, "Catégorie requise"),
-  subCategoryId: optionalId,
   brand: zod.z.string().optional(),
-  supplierId: optionalId,
   purchasePrice: zod.z.number().min(0, "Prix achat invalide"),
   salePrice: zod.z.number().min(0, "Prix vente invalide").optional(),
   profitMargin: zod.z.number().min(0, "Marge invalide").max(1e3).default(25),
   discount: zod.z.number().min(0, "Remise invalide").max(100).default(0),
-  tva: zod.z.number().min(0).max(100),
-  subjectToFodec: zod.z.boolean().optional().default(false),
   stock: zod.z.number().min(0).default(0),
   minStock: zod.z.number().min(0).default(0),
   unit: zod.z.string().min(1, "Unité requise"),
@@ -921,6 +1354,7 @@ const customerSchema = zod.z.object({
   name: zod.z.string().min(1, "Nom requis"),
   phone: zod.z.string().optional(),
   address: zod.z.string().optional(),
+  matricule: zod.z.string().optional(),
   email: zod.z.string().email("Email invalide").optional().or(zod.z.literal(""))
 });
 const purchaseOrderSchema = zod.z.object({
@@ -960,22 +1394,69 @@ const purchaseOrderPaySchema = zod.z.object({
 const saleSchema = zod.z.object({
   customerId: optionalId,
   customerName: zod.z.string().optional(),
+  customerAddress: zod.z.string().optional(),
+  customerPhone: zod.z.string().optional(),
+  customerMatricule: zod.z.string().optional(),
   lines: zod.z.array(
     zod.z.object({
-      productId: zod.z.string().min(1),
-      quantity: zod.z.number().min(1),
-      discount: zod.z.number().optional()
+      productId: zod.z.string().optional(),
+      isCustom: zod.z.boolean().optional(),
+      reference: zod.z.string().optional(),
+      designation: zod.z.string().optional(),
+      unitPrice: zod.z.coerce.number().optional(),
+      tva: zod.z.coerce.number().optional(),
+      quantity: zod.z.coerce.number().min(1),
+      discount: zod.z.coerce.number().optional()
+    }).superRefine((line, ctx) => {
+      const productId = line.productId?.trim();
+      const hasCatalogId = !!productId && /^[a-f\d]{24}$/i.test(productId);
+      const custom = line.isCustom === true || (productId?.startsWith("custom-") ?? false) || !!productId && !hasCatalogId;
+      if (custom) {
+        if (!line.designation?.trim()) {
+          ctx.addIssue({
+            code: zod.z.ZodIssueCode.custom,
+            message: "Désignation requise pour un article personnalisé",
+            path: ["designation"]
+          });
+        }
+        if (line.unitPrice === void 0 || Number.isNaN(line.unitPrice) || line.unitPrice < 0) {
+          ctx.addIssue({
+            code: zod.z.ZodIssueCode.custom,
+            message: "Prix unitaire requis pour un article personnalisé",
+            path: ["unitPrice"]
+          });
+        }
+        return;
+      }
+      if (!hasCatalogId) {
+        ctx.addIssue({
+          code: zod.z.ZodIssueCode.custom,
+          message: "Produit requis",
+          path: ["productId"]
+        });
+      }
     })
   ).min(1, "Panier vide"),
-  paymentMethod: zod.z.enum(["cash", "card", "mixed", "credit"]),
+  paymentMethod: zod.z.enum(["cash", "card", "mixed", "credit"]).default("cash"),
   amountPaid: zod.z.number().min(0).optional(),
   cashReceived: zod.z.number().optional(),
   cardAmount: zod.z.number().optional(),
-  includeTva: zod.z.boolean().optional().default(false)
+  bcNumber: zod.z.string().optional(),
+  blNumber: zod.z.string().optional(),
+  pieceNumber: zod.z.string().optional(),
+  representative: zod.z.string().optional(),
+  deliveryPerson: zod.z.string().optional(),
+  deliveryDriverName: zod.z.string().optional(),
+  deliveryDriverCin: zod.z.string().optional(),
+  deliveryVehiclePlate: zod.z.string().optional(),
+  validUntil: zod.z.string().optional(),
+  createdAt: zod.z.string().optional(),
+  includeTva: zod.z.boolean().optional().default(false),
+  forceInvoice: zod.z.boolean().optional().default(false)
 }).superRefine((data, ctx) => {
   const hasCustomer = !!(data.customerId || data.customerName?.trim());
   const isCredit = data.paymentMethod === "credit";
-  const partialPaid = data.amountPaid !== void 0 && data.amountPaid >= 0;
+  const partialPaid = data.amountPaid !== void 0 && data.amountPaid > 0;
   if ((isCredit || partialPaid) && !hasCustomer) {
     ctx.addIssue({
       code: zod.z.ZodIssueCode.custom,
@@ -998,9 +1479,12 @@ const settingsSchema = zod.z.object({
   companyName: zod.z.string().min(1, "Nom société requis"),
   companyAddress: zod.z.string().optional(),
   companyPhone: zod.z.string().optional(),
+  companyFax: zod.z.string().optional(),
+  companyMatriculeFiscal: zod.z.string().optional(),
+  companyTvaCode: zod.z.string().optional(),
+  companyRC: zod.z.string().optional(),
   defaultTva: zod.z.coerce.number().min(0).max(100),
   currency: zod.z.string().min(1),
-  invoiceFormat: zod.z.string().min(1),
   mongoUri: zod.z.string().min(1).optional()
 });
 zod.z.object({
@@ -1030,10 +1514,6 @@ function roundMoney(value) {
 }
 function calculateTVA(ht, tvaRate) {
   return roundMoney(ht * (tvaRate / 100));
-}
-function calculateFodec(htBase, ratePercent = 1) {
-  if (htBase <= 0) return 0;
-  return roundMoney(htBase * (ratePercent / 100));
 }
 function calculateSalePrice(purchasePrice, profitMargin) {
   if (profitMargin >= 100) return roundMoney(purchasePrice * (profitMargin / 100 + 1));
@@ -1088,6 +1568,28 @@ function getDayBounds(date = /* @__PURE__ */ new Date()) {
   end.setHours(23, 59, 59, 999);
   return { start, end };
 }
+function mergeDocumentLines(lines) {
+  const merged = /* @__PURE__ */ new Map();
+  for (const line of lines) {
+    const key = `${line.designation}::${line.unitPrice}::${line.discount ?? 0}`;
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, { ...line, quantity: Number(line.quantity || 0) });
+      continue;
+    }
+    existing.quantity += Number(line.quantity || 0);
+    existing.totalHT = roundMoney(existing.totalHT + line.totalHT);
+    existing.totalTTC = roundMoney(existing.totalTTC + line.totalTTC);
+  }
+  return Array.from(merged.values());
+}
+function buildDocumentTotals$1(lines, options = {}) {
+  const totalHT = roundMoney(lines.reduce((sum, line) => sum + (line.totalHT || 0), 0));
+  const totalTVA = options.includeTva ? roundMoney(lines.reduce((sum, line) => sum + ((line.totalTTC || 0) - (line.totalHT || 0)), 0)) : 0;
+  const timbreFiscal = options.timbreFiscal ?? 0;
+  const totalTTC = roundMoney(totalHT + totalTVA + timbreFiscal);
+  return { totalHT, totalTVA, totalTTC, timbreFiscal };
+}
 async function getNextReference(key, withYear = false) {
   const counter = await Counter.findOneAndUpdate(
     { key },
@@ -1097,18 +1599,6 @@ async function getNextReference(key, withYear = false) {
   const prefix = REFERENCE_PREFIXES[key] ?? key;
   const year = withYear ? (/* @__PURE__ */ new Date()).getFullYear() : void 0;
   return formatReference(prefix, counter.value, year);
-}
-async function getNextProductReference(categoryId) {
-  const category = await Category.findOneAndUpdate(
-    { _id: categoryId },
-    { $inc: { counter: 1 } },
-    { upsert: true, new: true }
-  );
-  if (!category) {
-    throw new Error(`Catégorie introuvable : ${categoryId}`);
-  }
-  const padded = String(category.counter).padStart(6, "0");
-  return `${category.prefix}${padded}`;
 }
 async function logAudit(params) {
   await AuditLog.create({
@@ -1121,9 +1611,9 @@ async function logAudit(params) {
     newValue: params.newValue
   });
 }
-const router$7 = express.Router();
-router$7.use(attachActor);
-router$7.get("/products", asyncHandler(async (req, res) => {
+const router$9 = express.Router();
+router$9.use(attachActor);
+router$9.get("/products", asyncHandler(async (req, res) => {
   const { search, page: page2 = "1", limit = "50", categoryId, supplierId, lowStock } = req.query;
   const pageNum = parseInt(page2, 10);
   const limitNum = parseInt(limit, 10);
@@ -1146,7 +1636,7 @@ router$7.get("/products", asyncHandler(async (req, res) => {
   ]);
   sendSuccess(res, { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) });
 }));
-router$7.get("/products/export/excel", asyncHandler(async (_req, res) => {
+router$9.get("/products/export/excel", asyncHandler(async (_req, res) => {
   const products = await Product.find({ isDeleted: false }).lean();
   const rows = products.map((p) => ({
     Référence: p.reference,
@@ -1167,7 +1657,7 @@ router$7.get("/products/export/excel", asyncHandler(async (_req, res) => {
   res.setHeader("Content-Disposition", "attachment; filename=produits.xlsx");
   res.send(buffer);
 }));
-router$7.get("/products/barcode/:barcode", asyncHandler(async (req, res) => {
+router$9.get("/products/barcode/:barcode", asyncHandler(async (req, res) => {
   const product = await Product.findOne({ barcode: req.params.barcode, isDeleted: false });
   if (!product) {
     sendError(res, "Produit introuvable", 404);
@@ -1175,7 +1665,7 @@ router$7.get("/products/barcode/:barcode", asyncHandler(async (req, res) => {
   }
   sendSuccess(res, product);
 }));
-router$7.get("/products/:id", asyncHandler(async (req, res) => {
+router$9.get("/products/:id", asyncHandler(async (req, res) => {
   const product = await Product.findOne({ _id: req.params.id, isDeleted: false }).populate("categoryId", "name prefix").populate("subCategoryId", "name").populate("supplierId", "companyName");
   if (!product) {
     sendError(res, "Produit introuvable", 404);
@@ -1183,18 +1673,22 @@ router$7.get("/products/:id", asyncHandler(async (req, res) => {
   }
   sendSuccess(res, product);
 }));
-router$7.post("/products", asyncHandler(async (req, res) => {
+router$9.post("/products", asyncHandler(async (req, res) => {
   const parsed = productSchema.safeParse(req.body);
   if (!parsed.success) {
     handleZodError(res, parsed.error);
     return;
   }
-  const categoryId = parsed.data.categoryId;
-  if (!categoryId) {
-    sendError(res, "Catégorie requise pour générer la référence", 400);
-    return;
+  let reference = typeof parsed.data.reference === "string" && parsed.data.reference.trim() ? parsed.data.reference.trim() : void 0;
+  if (reference) {
+    const exists = await Product.findOne({ reference });
+    if (exists) {
+      sendError(res, "Référence déjà utilisée", 400);
+      return;
+    }
+  } else {
+    reference = await getNextReference("product");
   }
-  const reference = await getNextProductReference(categoryId);
   const productData = { ...parsed.data, reference };
   if (!productData.salePrice && productData.purchasePrice > 0 && productData.profitMargin) {
     productData.salePrice = calculateSalePrice(productData.purchasePrice, productData.profitMargin);
@@ -1212,7 +1706,7 @@ router$7.post("/products", asyncHandler(async (req, res) => {
   });
   sendSuccess(res, product, 201);
 }));
-router$7.put("/products/:id", asyncHandler(async (req, res) => {
+router$9.put("/products/:id", asyncHandler(async (req, res) => {
   const parsed = productSchema.partial().safeParse(req.body);
   if (!parsed.success) {
     handleZodError(res, parsed.error);
@@ -1235,12 +1729,6 @@ router$7.put("/products/:id", asyncHandler(async (req, res) => {
   } else if (updateData.purchasePrice !== void 0 && updateData.profitMargin === void 0 && updateData.salePrice === void 0) {
     updateData.salePrice = calculateSalePrice(updateData.purchasePrice, old.profitMargin);
   }
-  const newCategoryId = updateData.categoryId ? String(updateData.categoryId) : void 0;
-  if (newCategoryId && newCategoryId !== old.categoryId?.toString()) {
-    const newRef = await getNextProductReference(newCategoryId);
-    updateData.reference = newRef;
-    updateData.categoryId = newCategoryId;
-  }
   const product = await Product.findByIdAndUpdate(productId, updateData, { new: true });
   await logAudit({
     userId: getActorId(req),
@@ -1253,7 +1741,7 @@ router$7.put("/products/:id", asyncHandler(async (req, res) => {
   });
   sendSuccess(res, product);
 }));
-router$7.delete("/products/:id", asyncHandler(async (req, res) => {
+router$9.delete("/products/:id", asyncHandler(async (req, res) => {
   const productId = String(req.params.id);
   const old = await Product.findById(productId);
   if (!old) {
@@ -1271,7 +1759,7 @@ router$7.delete("/products/:id", asyncHandler(async (req, res) => {
   });
   sendSuccess(res, { message: "Produit supprimé" });
 }));
-router$7.post("/products/import", asyncHandler(async (req, res) => {
+router$9.post("/products/import", asyncHandler(async (req, res) => {
   const { rows } = req.body;
   if (!rows?.length) {
     sendError(res, "Fichier vide", 400);
@@ -1312,11 +1800,11 @@ router$7.post("/products/import", asyncHandler(async (req, res) => {
   }
   sendSuccess(res, { imported });
 }));
-router$7.get("/categories", asyncHandler(async (_req, res) => {
+router$9.get("/categories", asyncHandler(async (_req, res) => {
   const categories = await Category.find().sort({ name: 1 });
   sendSuccess(res, categories);
 }));
-router$7.post("/categories", asyncHandler(async (req, res) => {
+router$9.post("/categories", asyncHandler(async (req, res) => {
   const parsed = categorySchema.safeParse(req.body);
   if (!parsed.success) {
     handleZodError(res, parsed.error);
@@ -1325,7 +1813,7 @@ router$7.post("/categories", asyncHandler(async (req, res) => {
   const category = await Category.create(parsed.data);
   sendSuccess(res, category, 201);
 }));
-router$7.put("/categories/:id", asyncHandler(async (req, res) => {
+router$9.put("/categories/:id", asyncHandler(async (req, res) => {
   const parsed = categorySchema.safeParse(req.body);
   if (!parsed.success) {
     handleZodError(res, parsed.error);
@@ -1334,17 +1822,17 @@ router$7.put("/categories/:id", asyncHandler(async (req, res) => {
   const category = await Category.findByIdAndUpdate(req.params.id, parsed.data, { new: true });
   sendSuccess(res, category);
 }));
-router$7.delete("/categories/:id", asyncHandler(async (req, res) => {
+router$9.delete("/categories/:id", asyncHandler(async (req, res) => {
   await Category.findByIdAndDelete(req.params.id);
   await SubCategory.deleteMany({ categoryId: req.params.id });
   sendSuccess(res, { message: "Catégorie supprimée" });
 }));
-router$7.get("/subcategories", asyncHandler(async (req, res) => {
+router$9.get("/subcategories", asyncHandler(async (req, res) => {
   const filter = req.query.categoryId ? { categoryId: req.query.categoryId } : {};
   const subcategories = await SubCategory.find(filter).populate("categoryId", "name").sort({ name: 1 });
   sendSuccess(res, subcategories);
 }));
-router$7.post("/subcategories", asyncHandler(async (req, res) => {
+router$9.post("/subcategories", asyncHandler(async (req, res) => {
   const parsed = subCategorySchema.safeParse(req.body);
   if (!parsed.success) {
     handleZodError(res, parsed.error);
@@ -1353,7 +1841,7 @@ router$7.post("/subcategories", asyncHandler(async (req, res) => {
   const sub = await SubCategory.create(parsed.data);
   sendSuccess(res, sub, 201);
 }));
-router$7.put("/subcategories/:id", asyncHandler(async (req, res) => {
+router$9.put("/subcategories/:id", asyncHandler(async (req, res) => {
   const parsed = subCategorySchema.safeParse(req.body);
   if (!parsed.success) {
     handleZodError(res, parsed.error);
@@ -1362,25 +1850,145 @@ router$7.put("/subcategories/:id", asyncHandler(async (req, res) => {
   const sub = await SubCategory.findByIdAndUpdate(req.params.id, parsed.data, { new: true });
   sendSuccess(res, sub);
 }));
-router$7.delete("/subcategories/:id", asyncHandler(async (req, res) => {
+router$9.delete("/subcategories/:id", asyncHandler(async (req, res) => {
   await SubCategory.findByIdAndDelete(req.params.id);
   sendSuccess(res, { message: "Sous-catégorie supprimée" });
 }));
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-async function findOrCreateCustomerByName(name) {
+async function findOrCreateCustomerByName(name, details = {}) {
   const trimmed = name.trim();
   if (!trimmed) return null;
   const existing = await Customer.findOne({
     isDeleted: false,
     name: { $regex: new RegExp(`^${escapeRegex(trimmed)}$`, "i") }
   });
-  if (existing) return { customer: existing, created: false };
+  if (existing) {
+    let changed = false;
+    ["phone", "address", "matricule"].forEach((key) => {
+      const value = details[key]?.trim();
+      if (value && existing[key] !== value) {
+        existing[key] = value;
+        changed = true;
+      }
+    });
+    if (changed) await existing.save();
+    return { customer: existing, created: false };
+  }
   const reference = await getNextReference("customer");
-  const customer = await Customer.create({ name: trimmed, reference });
+  const customer = await Customer.create({
+    name: trimmed,
+    reference,
+    phone: details.phone?.trim() || void 0,
+    address: details.address?.trim() || void 0,
+    matricule: details.matricule?.trim() || void 0
+  });
   return { customer, created: true };
 }
+async function resolveLineProductIds(lines) {
+  return Promise.all(
+    lines.map(async (line) => {
+      if (line.productId) return line;
+      if (!line.reference?.trim()) return line;
+      const product = await Product.findOne({ reference: line.reference.trim(), isDeleted: false });
+      if (!product) return line;
+      return { ...line, productId: product._id.toString() };
+    })
+  );
+}
+function mapLineForStorage(line) {
+  const stored = {
+    reference: line.reference,
+    designation: line.designation,
+    quantity: line.quantity,
+    unitPrice: line.unitPrice,
+    discount: line.discount ?? 0,
+    tva: line.tva ?? 0,
+    totalHT: line.totalHT,
+    totalTVA: line.totalTVA ?? Math.max(0, (line.totalTTC || 0) - (line.totalHT || 0)),
+    totalTTC: line.totalTTC
+  };
+  if (line.productId) {
+    stored.productId = line.productId;
+  }
+  return stored;
+}
+function mapInvoiceLinesToDeliveryLines(lines) {
+  return (lines || []).map((line) => {
+    const rawProductId = line.productId;
+    const productId = typeof rawProductId === "object" && rawProductId && "_id" in rawProductId ? String(rawProductId._id) : rawProductId ? String(rawProductId) : void 0;
+    const quantity = Number(line.quantity) || 0;
+    const unitPrice = Number(line.unitPrice) || 0;
+    const totalHT = Number(line.totalHT) || quantity * unitPrice;
+    const totalTTC = Number(line.totalTTC) || totalHT;
+    return {
+      productId,
+      reference: String(line.reference || ""),
+      designation: String(line.designation || ""),
+      quantity,
+      unitPrice,
+      discount: Number(line.discount) || 0,
+      tva: Number(line.tva) || 19,
+      totalHT,
+      totalTTC
+    };
+  });
+}
+async function createDeliveryNote(input) {
+  const resolvedLines = await resolveLineProductIds(input.lines);
+  const totals = buildDocumentTotals$1(resolvedLines, { includeTva: input.includeTva, timbreFiscal: 0 });
+  const reference = await getNextReference("deliveryNote", true);
+  return PurchaseSlip.create({
+    reference,
+    documentType: "delivery_note",
+    saleId: input.saleId ?? null,
+    sourceInvoiceId: input.sourceInvoiceId ?? void 0,
+    convertedInvoiceId: input.linkToInvoice ? input.invoiceId : null,
+    customerId: input.customerId || void 0,
+    customerName: input.customerName?.trim() || "Client comptant",
+    customerAddress: input.customerAddress?.trim() || void 0,
+    lines: resolvedLines.map(mapLineForStorage),
+    totalHT: totals.totalHT,
+    totalTVA: totals.totalTVA,
+    timbreFiscal: 0,
+    totalTTC: totals.totalTTC,
+    amountPaid: input.amountPaid ?? 0,
+    amountDue: input.amountDue ?? totals.totalTTC,
+    isSettled: input.isSettled ?? Boolean(input.linkToInvoice),
+    includeTva: input.includeTva ?? false,
+    blNumber: input.blNumber?.trim() || reference,
+    bcNumber: input.bcNumber,
+    pieceNumber: input.pieceNumber,
+    representative: input.representative,
+    deliveryPerson: input.deliveryPerson ?? input.deliveryDriverName,
+    deliveryDriverName: input.deliveryDriverName,
+    deliveryDriverCin: input.deliveryDriverCin,
+    deliveryVehiclePlate: input.deliveryVehiclePlate,
+    vehicleRegistration: input.deliveryVehiclePlate,
+    validUntil: input.validUntil
+  });
+}
+const deliveryNoteFilter = {
+  $or: [
+    { documentType: "delivery_note" },
+    {
+      documentType: { $exists: false },
+      $or: [{ saleId: null }, { convertedInvoiceId: { $ne: null }, amountDue: 0 }]
+    }
+  ]
+};
+const purchaseSlipFilter = {
+  $or: [
+    { documentType: "purchase_slip" },
+    {
+      documentType: { $exists: false },
+      amountDue: { $gt: 0 },
+      saleId: { $ne: null },
+      convertedInvoiceId: null
+    }
+  ]
+};
 async function convertPurchaseSlipToInvoice(slip) {
   if (slip.convertedInvoiceId) {
     const existing = await Invoice.findById(slip.convertedInvoiceId);
@@ -1401,7 +2009,6 @@ async function convertPurchaseSlipToInvoice(slip) {
     lines: slip.lines,
     totalHT: slip.totalHT,
     totalTVA: slip.totalTVA,
-    totalFodec: slip.totalFodec ?? 0,
     timbreFiscal: timbre,
     totalTTC,
     amountPaid: totalTTC,
@@ -1416,6 +2023,25 @@ async function convertPurchaseSlipToInvoice(slip) {
   await slip.save();
   sale.invoiceId = invoice._id;
   await sale.save();
+  await createDeliveryNote({
+    saleId: slip.saleId,
+    invoiceId: invoice._id,
+    customerId: slip.customerId,
+    customerName: slip.customerName,
+    customerAddress: slip.customerAddress,
+    lines: slip.lines,
+    includeTva: slip.includeTva ?? false,
+    linkToInvoice: true,
+    blNumber: slip.blNumber || invoice.reference,
+    bcNumber: slip.bcNumber,
+    pieceNumber: slip.pieceNumber,
+    representative: slip.representative,
+    deliveryPerson: slip.deliveryPerson,
+    validUntil: slip.validUntil,
+    amountPaid: invoice.amountPaid,
+    amountDue: 0,
+    isSettled: true
+  });
   return invoice;
 }
 function getSlipMaxPayment(slip) {
@@ -1462,9 +2088,9 @@ async function applyPaymentToPurchaseSlip(slip, amount) {
   await slip.save();
   return null;
 }
-const router$6 = express.Router();
-router$6.use(attachActor);
-router$6.get("/customers", asyncHandler(async (req, res) => {
+const router$8 = express.Router();
+router$8.use(attachActor);
+router$8.get("/customers", asyncHandler(async (req, res) => {
   const { search, page: page2 = "1", limit = "50" } = req.query;
   const pageNum = parseInt(page2, 10);
   const limitNum = parseInt(limit, 10);
@@ -1482,7 +2108,7 @@ router$6.get("/customers", asyncHandler(async (req, res) => {
   ]);
   sendSuccess(res, { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) });
 }));
-router$6.get("/customers/credits/open", asyncHandler(async (_req, res) => {
+router$8.get("/customers/credits/open", asyncHandler(async (_req, res) => {
   const slips = await PurchaseSlip.find({ isSettled: false, amountDue: { $gt: 0 }, convertedInvoiceId: null }).populate("customerId", "name reference phone").sort({ createdAt: -1 });
   const rows = slips.map((slip) => {
     const customer = slip.customerId;
@@ -1497,20 +2123,24 @@ router$6.get("/customers/credits/open", asyncHandler(async (_req, res) => {
   });
   sendSuccess(res, rows);
 }));
-router$6.post("/customers/quick", asyncHandler(async (req, res) => {
+router$8.post("/customers/quick", asyncHandler(async (req, res) => {
   const name = String(req.body?.name ?? "").trim();
   if (!name) {
     sendError(res, "Nom du client requis", 400);
     return;
   }
-  const result = await findOrCreateCustomerByName(name);
+  const result = await findOrCreateCustomerByName(name, {
+    phone: String(req.body?.phone ?? "").trim() || void 0,
+    address: String(req.body?.address ?? "").trim() || void 0,
+    matricule: String(req.body?.matricule ?? "").trim() || void 0
+  });
   if (!result) {
     sendError(res, "Nom du client requis", 400);
     return;
   }
   sendSuccess(res, { ...result.customer.toObject(), created: result.created }, result.created ? 201 : 200);
 }));
-router$6.get("/customers/:id", asyncHandler(async (req, res) => {
+router$8.get("/customers/:id", asyncHandler(async (req, res) => {
   const customer = await Customer.findOne({ _id: req.params.id, isDeleted: false });
   if (!customer) {
     sendError(res, "Client introuvable", 404);
@@ -1518,7 +2148,7 @@ router$6.get("/customers/:id", asyncHandler(async (req, res) => {
   }
   sendSuccess(res, customer);
 }));
-router$6.post("/customers", asyncHandler(async (req, res) => {
+router$8.post("/customers", asyncHandler(async (req, res) => {
   const parsed = customerSchema.safeParse(req.body);
   if (!parsed.success) {
     handleZodError(res, parsed.error);
@@ -1528,7 +2158,7 @@ router$6.post("/customers", asyncHandler(async (req, res) => {
   const customer = await Customer.create({ ...parsed.data, reference });
   sendSuccess(res, customer, 201);
 }));
-router$6.put("/customers/:id", asyncHandler(async (req, res) => {
+router$8.put("/customers/:id", asyncHandler(async (req, res) => {
   const parsed = customerSchema.safeParse(req.body);
   if (!parsed.success) {
     handleZodError(res, parsed.error);
@@ -1537,19 +2167,19 @@ router$6.put("/customers/:id", asyncHandler(async (req, res) => {
   const customer = await Customer.findByIdAndUpdate(req.params.id, parsed.data, { new: true });
   sendSuccess(res, customer);
 }));
-router$6.delete("/customers/:id", asyncHandler(async (req, res) => {
+router$8.delete("/customers/:id", asyncHandler(async (req, res) => {
   await Customer.findByIdAndUpdate(req.params.id, { isDeleted: true });
   sendSuccess(res, { message: "Client supprimé" });
 }));
-router$6.get("/customers/:id/sales", asyncHandler(async (req, res) => {
+router$8.get("/customers/:id/sales", asyncHandler(async (req, res) => {
   const sales = await Sale.find({ customerId: req.params.id, isCancelled: false }).sort({ createdAt: -1 });
   sendSuccess(res, sales);
 }));
-router$6.get("/customers/:id/invoices", asyncHandler(async (req, res) => {
+router$8.get("/customers/:id/invoices", asyncHandler(async (req, res) => {
   const invoices = await Invoice.find({ customerId: req.params.id }).sort({ createdAt: -1 });
   sendSuccess(res, invoices);
 }));
-router$6.post("/customer-payments", asyncHandler(async (req, res) => {
+router$8.post("/customer-payments", asyncHandler(async (req, res) => {
   const parsed = paymentSchema.safeParse(req.body);
   if (!parsed.success) {
     handleZodError(res, parsed.error);
@@ -1668,8 +2298,8 @@ router$6.post("/customer-payments", asyncHandler(async (req, res) => {
   }
   sendSuccess(res, { payment, invoice: createdInvoice }, 201);
 }));
-const router$5 = express.Router();
-router$5.use(attachActor);
+const router$7 = express.Router();
+router$7.use(attachActor);
 function calcReceiveBatchHT(orderLines, receiveLines) {
   return roundMoney(
     receiveLines.reduce((sum, rl) => {
@@ -1744,7 +2374,7 @@ async function applyPurchaseReceive(order, lines, actorId, options) {
     await StockMovement.create({
       productId: product._id,
       type: "in",
-      reason: "purchase",
+      reason: "achat",
       quantity: line.quantity,
       stockBefore,
       stockAfter: product.stock,
@@ -1764,7 +2394,7 @@ async function applyPurchaseReceive(order, lines, actorId, options) {
   });
   return { order, receipt, updatedProducts, receiptRef };
 }
-router$5.get("/suppliers", asyncHandler(async (req, res) => {
+router$7.get("/suppliers", asyncHandler(async (req, res) => {
   const { search, page: page2 = "1", limit = "50" } = req.query;
   const pageNum = parseInt(page2, 10);
   const limitNum = parseInt(limit, 10);
@@ -1781,7 +2411,7 @@ router$5.get("/suppliers", asyncHandler(async (req, res) => {
   ]);
   sendSuccess(res, { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) });
 }));
-router$5.get("/suppliers/:id", asyncHandler(async (req, res) => {
+router$7.get("/suppliers/:id", asyncHandler(async (req, res) => {
   const supplier = await Supplier.findOne({ _id: req.params.id, isDeleted: false });
   if (!supplier) {
     sendError(res, "Fournisseur introuvable", 404);
@@ -1789,7 +2419,7 @@ router$5.get("/suppliers/:id", asyncHandler(async (req, res) => {
   }
   sendSuccess(res, supplier);
 }));
-router$5.post("/suppliers", asyncHandler(async (req, res) => {
+router$7.post("/suppliers", asyncHandler(async (req, res) => {
   const parsed = supplierSchema.safeParse(req.body);
   if (!parsed.success) {
     handleZodError(res, parsed.error);
@@ -1799,7 +2429,7 @@ router$5.post("/suppliers", asyncHandler(async (req, res) => {
   const supplier = await Supplier.create({ ...parsed.data, reference });
   sendSuccess(res, supplier, 201);
 }));
-router$5.put("/suppliers/:id", asyncHandler(async (req, res) => {
+router$7.put("/suppliers/:id", asyncHandler(async (req, res) => {
   const parsed = supplierSchema.safeParse(req.body);
   if (!parsed.success) {
     handleZodError(res, parsed.error);
@@ -1808,19 +2438,19 @@ router$5.put("/suppliers/:id", asyncHandler(async (req, res) => {
   const supplier = await Supplier.findByIdAndUpdate(req.params.id, parsed.data, { new: true });
   sendSuccess(res, supplier);
 }));
-router$5.delete("/suppliers/:id", asyncHandler(async (req, res) => {
+router$7.delete("/suppliers/:id", asyncHandler(async (req, res) => {
   await Supplier.findByIdAndUpdate(req.params.id, { isDeleted: true });
   sendSuccess(res, { message: "Fournisseur supprimé" });
 }));
-router$5.get("/suppliers/:id/purchases", asyncHandler(async (req, res) => {
+router$7.get("/suppliers/:id/purchases", asyncHandler(async (req, res) => {
   const orders = await PurchaseOrder.find({ supplierId: req.params.id }).sort({ createdAt: -1 });
   sendSuccess(res, orders);
 }));
-router$5.get("/suppliers/:id/payments", asyncHandler(async (req, res) => {
+router$7.get("/suppliers/:id/payments", asyncHandler(async (req, res) => {
   const payments = await Payment.find({ type: "supplier", entityId: req.params.id }).sort({ createdAt: -1 });
   sendSuccess(res, payments);
 }));
-router$5.get("/suppliers/:id/activity", asyncHandler(async (req, res) => {
+router$7.get("/suppliers/:id/activity", asyncHandler(async (req, res) => {
   const supplierId = req.params.id;
   const supplier = await Supplier.findOne({ _id: supplierId, isDeleted: false });
   if (!supplier) {
@@ -1948,7 +2578,7 @@ router$5.get("/suppliers/:id/activity", asyncHandler(async (req, res) => {
     }))
   });
 }));
-router$5.get("/purchase-orders", asyncHandler(async (req, res) => {
+router$7.get("/purchase-orders", asyncHandler(async (req, res) => {
   const { status, page: page2 = "1", limit = "20" } = req.query;
   const pageNum = parseInt(page2, 10);
   const limitNum = parseInt(limit, 10);
@@ -1960,7 +2590,7 @@ router$5.get("/purchase-orders", asyncHandler(async (req, res) => {
   ]);
   sendSuccess(res, { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) });
 }));
-router$5.post("/purchase-orders/quick-receive", asyncHandler(async (req, res) => {
+router$7.post("/purchase-orders/quick-receive", asyncHandler(async (req, res) => {
   const parsed = quickReceiveSchema.safeParse(req.body);
   if (!parsed.success) {
     handleZodError(res, parsed.error);
@@ -2006,7 +2636,7 @@ router$5.post("/purchase-orders/quick-receive", asyncHandler(async (req, res) =>
     sendError(res, err instanceof Error ? err.message : "Erreur réception", 400);
   }
 }));
-router$5.post("/purchase-orders", asyncHandler(async (req, res) => {
+router$7.post("/purchase-orders", asyncHandler(async (req, res) => {
   const parsed = purchaseOrderSchema.safeParse(req.body);
   if (!parsed.success) {
     handleZodError(res, parsed.error);
@@ -2024,12 +2654,12 @@ router$5.post("/purchase-orders", asyncHandler(async (req, res) => {
   });
   sendSuccess(res, order, 201);
 }));
-router$5.put("/purchase-orders/:id/status", asyncHandler(async (req, res) => {
+router$7.put("/purchase-orders/:id/status", asyncHandler(async (req, res) => {
   const { status } = req.body;
   const order = await PurchaseOrder.findByIdAndUpdate(req.params.id, { status }, { new: true });
   sendSuccess(res, order);
 }));
-router$5.post("/purchase-orders/:id/receive", asyncHandler(async (req, res) => {
+router$7.post("/purchase-orders/:id/receive", asyncHandler(async (req, res) => {
   const { lines, updatePurchasePrices, payment } = req.body;
   const paymentParsed = purchaseReceivePaymentSchema.safeParse(
     payment ?? { mode: "credit" }
@@ -2096,7 +2726,7 @@ router$5.post("/purchase-orders/:id/receive", asyncHandler(async (req, res) => {
     sendError(res, err instanceof Error ? err.message : "Erreur réception", 400);
   }
 }));
-router$5.post("/purchase-orders/:id/pay", asyncHandler(async (req, res) => {
+router$7.post("/purchase-orders/:id/pay", asyncHandler(async (req, res) => {
   const parsed = purchaseOrderPaySchema.safeParse(req.body);
   if (!parsed.success) {
     handleZodError(res, parsed.error);
@@ -2140,7 +2770,7 @@ router$5.post("/purchase-orders/:id/pay", asyncHandler(async (req, res) => {
   });
   sendSuccess(res, { order, payment }, 201);
 }));
-router$5.post("/supplier-invoices", asyncHandler(async (req, res) => {
+router$7.post("/supplier-invoices", asyncHandler(async (req, res) => {
   const { supplierId, purchaseOrderId, reference, amount, filePath, fileType } = req.body;
   const invoice = await SupplierInvoice.create({
     supplierId,
@@ -2153,7 +2783,7 @@ router$5.post("/supplier-invoices", asyncHandler(async (req, res) => {
   await Supplier.findByIdAndUpdate(supplierId, { $inc: { balance: amount } });
   sendSuccess(res, invoice, 201);
 }));
-router$5.post("/supplier-payments", asyncHandler(async (req, res) => {
+router$7.post("/supplier-payments", asyncHandler(async (req, res) => {
   const parsed = paymentSchema.safeParse(req.body);
   if (!parsed.success) {
     handleZodError(res, parsed.error);
@@ -2182,9 +2812,73 @@ router$5.post("/supplier-payments", asyncHandler(async (req, res) => {
   await supplier.save();
   sendSuccess(res, payment, 201);
 }));
-const router$4 = express.Router();
-router$4.use(attachActor);
-router$4.post("/sales", asyncHandler(async (req, res) => {
+const router$6 = express.Router();
+router$6.use(attachActor);
+function isCustomSaleLine(line) {
+  if (line.isCustom === true) return true;
+  if (line.productId?.startsWith("custom-")) return true;
+  if (line.productId && !mongoose.Types.ObjectId.isValid(line.productId)) {
+    return !!line.designation?.trim();
+  }
+  return false;
+}
+async function buildSaleLineFromInput(line, includeTva) {
+  if (isCustomSaleLine(line)) {
+    const discountPercent2 = line.discount ?? 0;
+    const unitPrice2 = line.unitPrice ?? 0;
+    const tvaRate = line.tva ?? 19;
+    const lineTotalBeforeDiscount2 = roundMoney(unitPrice2 * line.quantity);
+    const lineHT2 = applyDiscount(lineTotalBeforeDiscount2, discountPercent2);
+    const lineTVA2 = includeTva ? calculateTVA(lineHT2, tvaRate) : 0;
+    const lineTTC2 = roundMoney(lineHT2 + lineTVA2);
+    return {
+      saleLine: {
+        reference: line.reference?.trim() || "DIV",
+        designation: line.designation?.trim() || "Article divers",
+        quantity: line.quantity,
+        unitPrice: unitPrice2,
+        discount: discountPercent2,
+        tva: tvaRate,
+        totalHT: lineHT2,
+        totalTVA: lineTVA2,
+        totalTTC: lineTTC2
+      }
+    };
+  }
+  const product = await Product.findById(line.productId);
+  if (!product || product.isDeleted) {
+    throw new Error(`Produit introuvable: ${line.productId}`);
+  }
+  if (product.stock < line.quantity) {
+    throw new Error(`Stock insuffisant pour ${product.designation}`);
+  }
+  const discountPercent = line.discount !== void 0 ? line.discount : product.discount || 0;
+  const unitPrice = product.salePrice;
+  const lineTotalBeforeDiscount = roundMoney(unitPrice * line.quantity);
+  const lineHT = applyDiscount(lineTotalBeforeDiscount, discountPercent);
+  const lineTVA = includeTva ? calculateTVA(lineHT, product.tva) : 0;
+  const lineTTC = roundMoney(lineHT + lineTVA);
+  return {
+    saleLine: {
+      productId: product._id.toString(),
+      reference: product.reference,
+      designation: product.designation,
+      quantity: line.quantity,
+      unitPrice,
+      discount: discountPercent,
+      tva: product.tva,
+      totalHT: lineHT,
+      totalTVA: lineTVA,
+      totalTTC: lineTTC
+    },
+    stockUpdate: {
+      productId: product._id.toString(),
+      stockBefore: product.stock,
+      quantity: line.quantity
+    }
+  };
+}
+router$6.post("/sales", asyncHandler(async (req, res) => {
   const parsed = saleSchema.safeParse(req.body);
   if (!parsed.success) {
     handleZodError(res, parsed.error);
@@ -2194,12 +2888,13 @@ router$4.post("/sales", asyncHandler(async (req, res) => {
   const saleLines = [];
   let totalHT = 0;
   let totalTVA = 0;
-  let fodecBaseHT = 0;
   const updatedProducts = [];
   try {
     for (const line of parsed.data.lines) {
-      const product = await Product.findById(line.productId);
-      if (!product || product.isDeleted) {
+      let built;
+      try {
+        built = await buildSaleLineFromInput(line, includeTva);
+      } catch (err) {
         for (const upd of updatedProducts) {
           const prod = await Product.findById(upd.productId);
           if (prod) {
@@ -2207,69 +2902,43 @@ router$4.post("/sales", asyncHandler(async (req, res) => {
             await prod.save();
           }
         }
-        sendError(res, `Produit introuvable: ${line.productId}`, 400);
+        sendError(res, err instanceof Error ? err.message : "Ligne invalide", 400);
         return;
       }
-      if (product.stock < line.quantity) {
-        for (const upd of updatedProducts) {
-          const prod = await Product.findById(upd.productId);
-          if (prod) {
-            prod.stock = upd.stockBefore;
-            await prod.save();
-          }
-        }
-        sendError(res, `Stock insuffisant pour ${product.designation}`, 400);
-        return;
+      saleLines.push(built.saleLine);
+      totalHT += built.saleLine.totalHT;
+      totalTVA += built.saleLine.totalTVA;
+      if (built.stockUpdate) {
+        const product = await Product.findById(built.stockUpdate.productId);
+        if (!product) continue;
+        product.stock -= built.stockUpdate.quantity;
+        await product.save();
+        updatedProducts.push({
+          productId: built.stockUpdate.productId,
+          stockBefore: built.stockUpdate.stockBefore
+        });
+        await StockMovement.create({
+          productId: product._id,
+          type: "out",
+          reason: "vente",
+          quantity: built.stockUpdate.quantity,
+          stockBefore: built.stockUpdate.stockBefore,
+          stockAfter: product.stock,
+          createdBy: getActorId(req)
+        });
       }
-      const discountPercent = line.discount !== void 0 ? line.discount : product.discount || 0;
-      const unitPrice = product.salePrice;
-      const lineTotalBeforeDiscount = roundMoney(unitPrice * line.quantity);
-      const lineHT = applyDiscount(lineTotalBeforeDiscount, discountPercent);
-      const lineTVA = includeTva ? calculateTVA(lineHT, product.tva) : 0;
-      const lineTTC = roundMoney(lineHT + lineTVA);
-      saleLines.push({
-        productId: product._id.toString(),
-        reference: product.reference,
-        designation: product.designation,
-        quantity: line.quantity,
-        unitPrice,
-        discount: discountPercent,
-        tva: product.tva,
-        totalHT: lineHT,
-        totalTVA: lineTVA,
-        totalTTC: lineTTC
-      });
-      totalHT += lineHT;
-      totalTVA += lineTVA;
-      if (product.subjectToFodec) {
-        fodecBaseHT += lineHT;
-      }
-      const stockBefore = product.stock;
-      product.stock -= line.quantity;
-      await product.save();
-      updatedProducts.push({ productId: product._id.toString(), stockBefore });
-      await StockMovement.create({
-        productId: product._id,
-        type: "out",
-        reason: "sale",
-        quantity: line.quantity,
-        stockBefore,
-        stockAfter: product.stock,
-        createdBy: getActorId(req)
-      });
     }
     totalHT = roundMoney(totalHT);
     totalTVA = roundMoney(totalTVA);
-    fodecBaseHT = roundMoney(fodecBaseHT);
-    const totalFodec = calculateFodec(fodecBaseHT);
-    const subtotal = roundMoney(totalHT + totalFodec + totalTVA);
+    const subtotal = roundMoney(totalHT + totalTVA);
+    const forceInvoice = parsed.data.forceInvoice === true;
     const paymentProbe = resolveSalePayment(subtotal, parsed.data.paymentMethod, {
       amountPaid: parsed.data.amountPaid,
       cashReceived: parsed.data.cashReceived,
       cardAmount: parsed.data.cardAmount
     });
     const isFullPayment = paymentProbe.amountDue === 0;
-    const timbreFiscal = isFullPayment ? TIMBRE_FISCAL_AMOUNT : 0;
+    const timbreFiscal = isFullPayment || forceInvoice ? TIMBRE_FISCAL_AMOUNT : 0;
     const totalTTC = roundMoney(subtotal + timbreFiscal);
     const payment = resolveSalePayment(totalTTC, parsed.data.paymentMethod, {
       amountPaid: parsed.data.amountPaid,
@@ -2277,18 +2946,56 @@ router$4.post("/sales", asyncHandler(async (req, res) => {
       cardAmount: parsed.data.cardAmount
     });
     const { amountPaid, amountDue, change } = payment;
+    const billingDetails = {
+      bcNumber: parsed.data.bcNumber?.trim() || void 0,
+      blNumber: parsed.data.blNumber?.trim() || void 0,
+      pieceNumber: parsed.data.pieceNumber?.trim() || void 0,
+      representative: parsed.data.representative?.trim() || void 0,
+      deliveryPerson: parsed.data.deliveryPerson?.trim() || parsed.data.deliveryDriverName?.trim() || void 0,
+      validUntil: parsed.data.validUntil ? new Date(parsed.data.validUntil) : void 0,
+      createdAt: parsed.data.createdAt ? new Date(parsed.data.createdAt) : void 0
+    };
+    const deliveryDetails = {
+      deliveryDriverName: parsed.data.deliveryDriverName?.trim() || parsed.data.deliveryPerson?.trim() || void 0,
+      deliveryDriverCin: parsed.data.deliveryDriverCin?.trim() || void 0,
+      deliveryVehiclePlate: parsed.data.deliveryVehiclePlate?.trim() || void 0
+    };
     let resolvedCustomerId = parsed.data.customerId || void 0;
     let resolvedCustomerName = parsed.data.customerName?.trim() || void 0;
+    let resolvedCustomerAddress = parsed.data.customerAddress?.trim() || void 0;
+    let resolvedCustomerMatricule = parsed.data.customerMatricule?.trim() || void 0;
     if (!resolvedCustomerId && resolvedCustomerName) {
-      const result = await findOrCreateCustomerByName(resolvedCustomerName);
+      const result = await findOrCreateCustomerByName(resolvedCustomerName, {
+        phone: parsed.data.customerPhone?.trim(),
+        address: resolvedCustomerAddress,
+        matricule: resolvedCustomerMatricule
+      });
       if (result) {
         resolvedCustomerId = result.customer._id.toString();
         resolvedCustomerName = result.customer.name;
+        resolvedCustomerAddress = result.customer.address || resolvedCustomerAddress;
+        resolvedCustomerMatricule = result.customer.matricule || resolvedCustomerMatricule;
       }
     } else if (resolvedCustomerId) {
       const customer = await Customer.findById(resolvedCustomerId);
       if (customer) {
         resolvedCustomerName = resolvedCustomerName || customer.name;
+        resolvedCustomerAddress = customer.address || resolvedCustomerAddress;
+        resolvedCustomerMatricule = resolvedCustomerMatricule || customer.matricule || void 0;
+        let changed = false;
+        if (parsed.data.customerPhone?.trim() && customer.phone !== parsed.data.customerPhone.trim()) {
+          customer.phone = parsed.data.customerPhone.trim();
+          changed = true;
+        }
+        if (resolvedCustomerAddress && customer.address !== resolvedCustomerAddress) {
+          customer.address = resolvedCustomerAddress;
+          changed = true;
+        }
+        if (resolvedCustomerMatricule && customer.matricule !== resolvedCustomerMatricule) {
+          customer.matricule = resolvedCustomerMatricule;
+          changed = true;
+        }
+        if (changed) await customer.save();
       }
     }
     if (amountDue > 0 && !resolvedCustomerId) {
@@ -2304,26 +3011,29 @@ router$4.post("/sales", asyncHandler(async (req, res) => {
     }
     const sale = await Sale.create({
       customerId: resolvedCustomerId,
+      customerAddress: resolvedCustomerAddress,
       cashierId: getActorId(req),
       lines: saleLines,
       totalHT,
       totalTVA,
-      totalFodec,
       timbreFiscal,
       totalTTC,
       amountPaid,
       amountDue,
       paymentMethod: parsed.data.paymentMethod,
+      ...billingDetails,
       cashReceived: parsed.data.cashReceived,
       cardAmount: parsed.data.cardAmount,
       change,
       includeTva
     });
     let customerName = resolvedCustomerName;
+    let customerAddress = resolvedCustomerAddress;
     if (resolvedCustomerId) {
       const customer = await Customer.findById(resolvedCustomerId);
       if (customer) {
         customerName = customer.name;
+        customerAddress = customer.address || customerAddress;
         customer.totalPurchases += totalTTC;
         if (amountDue > 0) {
           customer.creditBalance += amountDue;
@@ -2335,20 +3045,23 @@ router$4.post("/sales", asyncHandler(async (req, res) => {
       saleId: sale._id,
       customerId: resolvedCustomerId,
       customerName,
+      customerAddress,
+      customerMatricule: resolvedCustomerMatricule,
       lines: saleLines,
       totalHT,
       totalTVA,
-      totalFodec,
       timbreFiscal,
       totalTTC,
       amountPaid,
       amountDue,
+      ...billingDetails,
       includeTva
     };
-    if (amountDue > 0) {
+    if (amountDue > 0 && !forceInvoice) {
       const slipRef = await getNextReference("purchaseSlip", true);
       const purchaseSlip = await PurchaseSlip.create({
         reference: slipRef,
+        documentType: "purchase_slip",
         ...docPayload,
         isSettled: false
       });
@@ -2361,11 +3074,37 @@ router$4.post("/sales", asyncHandler(async (req, res) => {
     const invoice = await Invoice.create({
       reference: invoiceRef,
       ...docPayload,
-      isPaid: true
+      isPaid: amountDue <= 0
     });
+    let deliveryNote = null;
+    if (amountDue <= 0) {
+      deliveryNote = await createDeliveryNote({
+        saleId: sale._id,
+        invoiceId: invoice._id,
+        customerId: resolvedCustomerId,
+        customerName,
+        customerAddress,
+        lines: saleLines,
+        includeTva,
+        linkToInvoice: true,
+        blNumber: billingDetails.blNumber || invoiceRef,
+        bcNumber: billingDetails.bcNumber,
+        pieceNumber: billingDetails.pieceNumber,
+        representative: billingDetails.representative,
+        deliveryPerson: billingDetails.deliveryPerson,
+        ...deliveryDetails,
+        validUntil: billingDetails.validUntil,
+        amountPaid,
+        amountDue: 0,
+        isSettled: true
+      });
+    }
     sale.invoiceId = invoice._id;
+    if (deliveryNote) {
+      sale.purchaseSlipId = deliveryNote._id;
+    }
     await sale.save();
-    sendSuccess(res, { sale, invoice, documentType: "invoice" }, 201);
+    sendSuccess(res, { sale, invoice, deliveryNote, documentType: "invoice" }, 201);
   } catch (err) {
     try {
       for (const upd of updatedProducts) {
@@ -2380,7 +3119,7 @@ router$4.post("/sales", asyncHandler(async (req, res) => {
     throw err;
   }
 }));
-router$4.get("/sales", asyncHandler(async (req, res) => {
+router$6.get("/sales", asyncHandler(async (req, res) => {
   const { page: page2 = "1", limit = "20", date } = req.query;
   const pageNum = parseInt(page2, 10);
   const limitNum = parseInt(limit, 10);
@@ -2399,7 +3138,7 @@ router$4.get("/sales", asyncHandler(async (req, res) => {
   ]);
   sendSuccess(res, { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) });
 }));
-router$4.post("/sales/:id/cancel", asyncHandler(async (req, res) => {
+router$6.post("/sales/:id/cancel", asyncHandler(async (req, res) => {
   const sale = await Sale.findById(req.params.id);
   if (!sale || sale.isCancelled) {
     sendError(res, "Vente introuvable", 404);
@@ -2409,6 +3148,7 @@ router$4.post("/sales/:id/cancel", asyncHandler(async (req, res) => {
   const updatedProducts = [];
   try {
     for (const line of sale.lines) {
+      if (!line.productId) continue;
       const product = await Product.findById(line.productId);
       if (!product) continue;
       const stockBefore = product.stock;
@@ -2462,7 +3202,7 @@ router$4.post("/sales/:id/cancel", asyncHandler(async (req, res) => {
     throw err;
   }
 }));
-router$4.get("/invoices", asyncHandler(async (req, res) => {
+router$6.get("/invoices", asyncHandler(async (req, res) => {
   const { page: page2 = "1", limit = "20" } = req.query;
   const pageNum = parseInt(page2, 10);
   const limitNum = parseInt(limit, 10);
@@ -2472,7 +3212,7 @@ router$4.get("/invoices", asyncHandler(async (req, res) => {
   ]);
   sendSuccess(res, { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) });
 }));
-router$4.get("/invoices/:id/receipt", asyncHandler(async (req, res) => {
+router$6.get("/invoices/:id/receipt", asyncHandler(async (req, res) => {
   const invoice = await Invoice.findById(req.params.id);
   if (!invoice) {
     sendError(res, "Facture introuvable", 404);
@@ -2482,15 +3222,15 @@ router$4.get("/invoices/:id/receipt", asyncHandler(async (req, res) => {
   const receiptData = generateReceiptEscPos(invoice, settings);
   sendSuccess(res, { data: receiptData.toString("base64") });
 }));
-router$4.get("/invoices/:id", asyncHandler(async (req, res) => {
+router$6.get("/invoices/:id", asyncHandler(async (req, res) => {
   const invoice = await Invoice.findById(req.params.id).populate("customerId", "name phone address");
   if (!invoice) {
     sendError(res, "Facture introuvable", 404);
     return;
   }
-  sendSuccess(res, invoice);
+  sendSuccess(res, invoice.toObject());
 }));
-router$4.patch("/invoices/:id", asyncHandler(async (req, res) => {
+router$6.patch("/invoices/:id", asyncHandler(async (req, res) => {
   const parsed = updateInvoiceSchema.safeParse(req.body);
   if (!parsed.success) {
     handleZodError(res, parsed.error);
@@ -2507,17 +3247,25 @@ router$4.patch("/invoices/:id", asyncHandler(async (req, res) => {
   }
   sendSuccess(res, invoice);
 }));
-router$4.get("/purchase-slips", asyncHandler(async (req, res) => {
+router$6.delete("/invoices/:id", asyncHandler(async (req, res) => {
+  const invoice = await Invoice.findByIdAndDelete(req.params.id);
+  if (!invoice) {
+    sendError(res, "Facture introuvable", 404);
+    return;
+  }
+  sendSuccess(res, { message: "Facture supprimée" });
+}));
+router$6.get("/purchase-slips", asyncHandler(async (req, res) => {
   const { page: page2 = "1", limit = "20" } = req.query;
   const pageNum = parseInt(page2, 10);
   const limitNum = parseInt(limit, 10);
   const [data, total] = await Promise.all([
-    PurchaseSlip.find().sort({ createdAt: -1 }).skip((pageNum - 1) * limitNum).limit(limitNum),
-    PurchaseSlip.countDocuments()
+    PurchaseSlip.find(purchaseSlipFilter).sort({ createdAt: -1 }).skip((pageNum - 1) * limitNum).limit(limitNum),
+    PurchaseSlip.countDocuments(purchaseSlipFilter)
   ]);
   sendSuccess(res, { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) });
 }));
-router$4.get("/purchase-slips/:id", asyncHandler(async (req, res) => {
+router$6.get("/purchase-slips/:id", asyncHandler(async (req, res) => {
   const slip = await PurchaseSlip.findById(req.params.id).populate("customerId", "name phone");
   if (!slip) {
     sendError(res, "Bon d'achat introuvable", 404);
@@ -2525,7 +3273,7 @@ router$4.get("/purchase-slips/:id", asyncHandler(async (req, res) => {
   }
   sendSuccess(res, slip);
 }));
-router$4.get("/purchase-slips/:id/receipt", asyncHandler(async (req, res) => {
+router$6.get("/purchase-slips/:id/receipt", asyncHandler(async (req, res) => {
   const slip = await PurchaseSlip.findById(req.params.id);
   if (!slip) {
     sendError(res, "Bon d'achat introuvable", 404);
@@ -2535,9 +3283,50 @@ router$4.get("/purchase-slips/:id/receipt", asyncHandler(async (req, res) => {
   const receiptData = generatePurchaseSlipEscPos(slip, settings);
   sendSuccess(res, { data: receiptData.toString("base64") });
 }));
-const router$3 = express.Router();
-router$3.use(attachActor);
-router$3.get("/stock/movements", asyncHandler(async (req, res) => {
+router$6.put("/purchase-slips/:id", asyncHandler(async (req, res) => {
+  const body = req.body;
+  const slip = await PurchaseSlip.findById(req.params.id);
+  if (!slip) {
+    sendError(res, "Bon d'achat introuvable", 404);
+    return;
+  }
+  if (body.customerName !== void 0) slip.customerName = body.customerName.trim();
+  if (body.customerAddress !== void 0) slip.customerAddress = body.customerAddress?.trim();
+  if (body.includeTva !== void 0) slip.includeTva = body.includeTva;
+  if (body.lines?.length) {
+    const totals = buildDocumentTotals(body.lines, { includeTva: body.includeTva ?? slip.includeTva, timbreFiscal: 0 });
+    slip.lines = body.lines.map((line) => ({
+      productId: void 0,
+      reference: line.reference ?? "",
+      designation: line.designation,
+      quantity: line.quantity,
+      unitPrice: line.unitPrice,
+      discount: line.discount ?? 0,
+      tva: line.tva ?? 0,
+      totalHT: line.totalHT,
+      totalTVA: Math.max(0, (line.totalTTC || 0) - (line.totalHT || 0)),
+      totalTTC: line.totalTTC
+    }));
+    slip.totalHT = totals.totalHT;
+    slip.totalTVA = totals.totalTVA;
+    slip.totalTTC = totals.totalTTC;
+    const payment = resolveSalePayment(slip.totalTTC, slip.amountPaid || 0);
+    slip.amountDue = payment.amountDue;
+  }
+  await slip.save();
+  sendSuccess(res, slip);
+}));
+router$6.delete("/purchase-slips/:id", asyncHandler(async (req, res) => {
+  const slip = await PurchaseSlip.findByIdAndDelete(req.params.id);
+  if (!slip) {
+    sendError(res, "Bon d'achat introuvable", 404);
+    return;
+  }
+  sendSuccess(res, { message: "Bon d'achat supprimé" });
+}));
+const router$5 = express.Router();
+router$5.use(attachActor);
+router$5.get("/stock/movements", asyncHandler(async (req, res) => {
   const { productId, page: page2 = "1", limit = "50" } = req.query;
   const pageNum = parseInt(page2, 10);
   const limitNum = parseInt(limit, 10);
@@ -2549,26 +3338,32 @@ router$3.get("/stock/movements", asyncHandler(async (req, res) => {
   ]);
   sendSuccess(res, { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) });
 }));
-router$3.get("/stock/valuation", asyncHandler(async (_req, res) => {
+router$5.get("/stock/valuation", asyncHandler(async (_req, res) => {
   const products = await Product.find({ isDeleted: false });
-  const valuation = products.reduce((sum, p) => sum + p.stock * p.purchasePrice, 0);
-  const saleValue = products.reduce((sum, p) => sum + p.stock * p.salePrice, 0);
+  const currentStock = products.reduce((sum, p) => sum + p.stock, 0);
   const lowStock = products.filter((p) => p.stock <= p.minStock);
   sendSuccess(res, {
     totalProducts: products.length,
-    purchaseValue: Math.round(valuation * 1e3) / 1e3,
-    saleValue: Math.round(saleValue * 1e3) / 1e3,
-    lowStockProducts: lowStock
+    currentStock,
+    restockCount: lowStock.length,
+    lowStockProducts: lowStock.map((p) => ({
+      _id: p._id,
+      designation: p.designation,
+      stock: p.stock,
+      minStock: p.minStock,
+      purchasePrice: p.purchasePrice,
+      supplierId: p.supplierId
+    }))
   });
 }));
-router$3.get("/stock/alerts", asyncHandler(async (_req, res) => {
+router$5.get("/stock/alerts", asyncHandler(async (_req, res) => {
   const products = await Product.find({
     isDeleted: false,
     $expr: { $lte: ["$stock", "$minStock"] }
   }).sort({ stock: 1 });
   sendSuccess(res, products);
 }));
-router$3.post("/stock/adjust", asyncHandler(async (req, res) => {
+router$5.post("/stock/adjust", asyncHandler(async (req, res) => {
   const { productId, quantity, notes } = req.body;
   const product = await Product.findById(productId);
   if (!product) {
@@ -2591,7 +3386,7 @@ router$3.post("/stock/adjust", asyncHandler(async (req, res) => {
   });
   sendSuccess(res, product);
 }));
-router$3.post("/inventory", asyncHandler(async (req, res) => {
+router$5.post("/inventory", asyncHandler(async (req, res) => {
   const { lines, notes } = req.body;
   const reference = await getNextReference("inventory");
   const adjustmentLines = [];
@@ -2617,7 +3412,7 @@ router$3.post("/inventory", asyncHandler(async (req, res) => {
         await StockMovement.create({
           productId: product._id,
           type: difference > 0 ? "in" : "out",
-          reason: "inventory",
+          reason: "inventaire",
           quantity: Math.abs(difference),
           stockBefore,
           stockAfter: product.stock,
@@ -2647,7 +3442,7 @@ router$3.post("/inventory", asyncHandler(async (req, res) => {
     throw err;
   }
 }));
-router$3.get("/inventory", asyncHandler(async (req, res) => {
+router$5.get("/inventory", asyncHandler(async (req, res) => {
   const { page: page2 = "1", limit = "20" } = req.query;
   const pageNum = parseInt(page2, 10);
   const limitNum = parseInt(limit, 10);
@@ -2657,21 +3452,24 @@ router$3.get("/inventory", asyncHandler(async (req, res) => {
   ]);
   sendSuccess(res, { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) });
 }));
-const router$2 = express.Router();
-router$2.use(attachActor);
-router$2.get("/dashboard", asyncHandler(async (_req, res) => {
+const router$4 = express.Router();
+router$4.use(attachActor);
+router$4.get("/dashboard", asyncHandler(async (_req, res) => {
   const { start, end } = getDayBounds();
   const todaySales = await Sale.find({
     isCancelled: false,
     createdAt: { $gte: start, $lte: end }
   });
   const todayRevenue = todaySales.reduce((sum, s) => sum + s.totalTTC, 0);
-  const productIds = todaySales.flatMap((s) => s.lines.map((l) => l.productId));
+  const productIds = todaySales.flatMap(
+    (s) => s.lines.map((l) => l.productId).filter((id) => !!id)
+  );
   const products = await Product.find({ _id: { $in: productIds } }).lean();
   const productMap = new Map(products.map((p) => [p._id.toString(), p]));
   let profit = 0;
   for (const sale of todaySales) {
     for (const line of sale.lines) {
+      if (!line.productId) continue;
       const product = productMap.get(line.productId.toString());
       if (product) {
         profit += line.totalHT - product.purchasePrice * line.quantity;
@@ -2701,6 +3499,7 @@ router$2.get("/dashboard", asyncHandler(async (_req, res) => {
   const topProducts = await Sale.aggregate([
     { $match: { isCancelled: false } },
     { $unwind: "$lines" },
+    { $match: { "lines.productId": { $exists: true, $ne: null } } },
     {
       $group: {
         _id: "$lines.productId",
@@ -2733,7 +3532,7 @@ router$2.get("/dashboard", asyncHandler(async (_req, res) => {
     }))
   });
 }));
-router$2.get("/reports/sales", asyncHandler(async (req, res) => {
+router$4.get("/reports/sales", asyncHandler(async (req, res) => {
   const { period = "month", year, month } = req.query;
   const filter = { isCancelled: false };
   if (period === "day" && year && month) {
@@ -2754,11 +3553,12 @@ router$2.get("/reports/sales", asyncHandler(async (req, res) => {
   const totalHT = sales.reduce((sum, s) => sum + s.totalHT, 0);
   sendSuccess(res, { sales, totalRevenue, totalHT, count: sales.length });
 }));
-router$2.get("/reports/top-products", asyncHandler(async (req, res) => {
+router$4.get("/reports/top-products", asyncHandler(async (req, res) => {
   const { limit = "10" } = req.query;
   const top = await Sale.aggregate([
     { $match: { isCancelled: false } },
     { $unwind: "$lines" },
+    { $match: { "lines.productId": { $exists: true, $ne: null } } },
     {
       $group: {
         _id: "$lines.productId",
@@ -2773,11 +3573,11 @@ router$2.get("/reports/top-products", asyncHandler(async (req, res) => {
   ]);
   sendSuccess(res, top);
 }));
-router$2.get("/reports/top-customers", asyncHandler(async (_req, res) => {
+router$4.get("/reports/top-customers", asyncHandler(async (_req, res) => {
   const top = await Customer.find({ isDeleted: false }).sort({ totalPurchases: -1 }).limit(10).select("name reference totalPurchases creditBalance");
   sendSuccess(res, top);
 }));
-router$2.get("/reports/top-suppliers", asyncHandler(async (_req, res) => {
+router$4.get("/reports/top-suppliers", asyncHandler(async (_req, res) => {
   const top = await PurchaseOrder.aggregate([
     { $group: { _id: "$supplierId", count: { $sum: 1 }, total: { $sum: "$totalHT" } } },
     { $sort: { total: -1 } },
@@ -2794,7 +3594,7 @@ router$2.get("/reports/top-suppliers", asyncHandler(async (_req, res) => {
   ]);
   sendSuccess(res, top);
 }));
-router$2.get("/reports/profit", asyncHandler(async (req, res) => {
+router$4.get("/reports/profit", asyncHandler(async (req, res) => {
   const { year, month } = req.query;
   const filter = { isCancelled: false };
   if (year && month) {
@@ -2803,7 +3603,13 @@ router$2.get("/reports/profit", asyncHandler(async (req, res) => {
     filter.createdAt = { $gte: start, $lte: end };
   }
   const sales = await Sale.find(filter);
-  const productIds = [...new Set(sales.flatMap((s) => s.lines.map((l) => l.productId.toString())))];
+  const productIds = [
+    ...new Set(
+      sales.flatMap(
+        (s) => s.lines.map((l) => l.productId).filter((id) => !!id).map((id) => id.toString())
+      )
+    )
+  ];
   const products = await Product.find({ _id: { $in: productIds } });
   const productMap = new Map(products.map((p) => [p._id.toString(), p]));
   let revenue = 0;
@@ -2811,6 +3617,7 @@ router$2.get("/reports/profit", asyncHandler(async (req, res) => {
   for (const sale of sales) {
     revenue += sale.totalTTC;
     for (const line of sale.lines) {
+      if (!line.productId) continue;
       const product = productMap.get(line.productId.toString());
       if (product) cost += product.purchasePrice * line.quantity;
     }
@@ -2821,16 +3628,16 @@ router$2.get("/reports/profit", asyncHandler(async (req, res) => {
     profit: Math.round((revenue - cost) * 1e3) / 1e3
   });
 }));
-const router$1 = express.Router();
-router$1.use(attachActor);
-router$1.get("/settings", asyncHandler(async (_req, res) => {
+const router$3 = express.Router();
+router$3.use(attachActor);
+router$3.get("/settings", asyncHandler(async (_req, res) => {
   let settings = await Settings.findOne();
   if (!settings) {
     settings = await Settings.create({});
   }
   sendSuccess(res, settings);
 }));
-router$1.put("/settings", asyncHandler(async (req, res) => {
+router$3.put("/settings", asyncHandler(async (req, res) => {
   const parsed = settingsSchema.safeParse(req.body);
   if (!parsed.success) {
     handleZodError(res, parsed.error);
@@ -2853,7 +3660,7 @@ router$1.put("/settings", asyncHandler(async (req, res) => {
   });
   sendSuccess(res, settings);
 }));
-router$1.get("/audit-logs", asyncHandler(async (req, res) => {
+router$3.get("/audit-logs", asyncHandler(async (req, res) => {
   const { page: page2 = "1", limit = "50" } = req.query;
   const pageNum = parseInt(page2, 10);
   const limitNum = parseInt(limit, 10);
@@ -2863,8 +3670,8 @@ router$1.get("/audit-logs", asyncHandler(async (req, res) => {
   ]);
   sendSuccess(res, { data, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) });
 }));
-const router = express.Router();
-router.use(attachActor);
+const router$2 = express.Router();
+router$2.use(attachActor);
 const EXPENSE_LABELS = {
   merchandise: "Achats de marchandises",
   transport: "Transport",
@@ -2877,7 +3684,7 @@ function getPeriodBounds(year, month) {
   const end = new Date(year, month, 0, 23, 59, 59, 999);
   return { start, end };
 }
-router.get("/finance/client-tracking", asyncHandler(async (req, res) => {
+router$2.get("/finance/client-tracking", asyncHandler(async (req, res) => {
   const { customerId, page: page2 = "1", limit = "50" } = req.query;
   const pageNum = parseInt(page2, 10);
   const limitNum = parseInt(limit, 10);
@@ -2910,7 +3717,7 @@ router.get("/finance/client-tracking", asyncHandler(async (req, res) => {
   }));
   sendSuccess(res, { data: rows, total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) });
 }));
-router.get("/finance/summary", asyncHandler(async (req, res) => {
+router$2.get("/finance/summary", asyncHandler(async (req, res) => {
   const now = /* @__PURE__ */ new Date();
   const year = parseInt(req.query.year, 10) || now.getFullYear();
   const month = parseInt(req.query.month, 10) || now.getMonth() + 1;
@@ -2966,7 +3773,7 @@ router.get("/finance/summary", asyncHandler(async (req, res) => {
     period: { year, month }
   });
 }));
-router.get("/expenses", asyncHandler(async (req, res) => {
+router$2.get("/expenses", asyncHandler(async (req, res) => {
   const { year, month } = req.query;
   const filter = {};
   if (year && month) {
@@ -2976,7 +3783,7 @@ router.get("/expenses", asyncHandler(async (req, res) => {
   const expenses = await Expense.find(filter).sort({ date: -1 });
   sendSuccess(res, expenses);
 }));
-router.post("/expenses", asyncHandler(async (req, res) => {
+router$2.post("/expenses", asyncHandler(async (req, res) => {
   const parsed = expenseSchema.safeParse(req.body);
   if (!parsed.success) {
     handleZodError(res, parsed.error);
@@ -2989,13 +3796,316 @@ router.post("/expenses", asyncHandler(async (req, res) => {
   });
   sendSuccess(res, expense, 201);
 }));
-router.delete("/expenses/:id", asyncHandler(async (req, res) => {
+router$2.delete("/expenses/:id", asyncHandler(async (req, res) => {
   const expense = await Expense.findByIdAndDelete(req.params.id);
   if (!expense) {
     sendError(res, "Dépense introuvable", 404);
     return;
   }
   sendSuccess(res, { message: "Dépense supprimée" });
+}));
+const router$1 = express.Router();
+router$1.use(attachActor);
+async function enrichDeliveryNoteForPdf(doc) {
+  const data = doc.toObject();
+  if (doc.customerId) {
+    const customer = await Customer.findById(doc.customerId);
+    if (customer) {
+      data.customerCode = customer.reference;
+    }
+  }
+  data.deliveryDriverName = doc.deliveryDriverName || doc.deliveryPerson;
+  data.deliveryDriverCin = doc.deliveryDriverCin;
+  data.deliveryVehiclePlate = doc.deliveryVehiclePlate || doc.vehicleRegistration;
+  data.vehicleRegistration = doc.vehicleRegistration || doc.deliveryVehiclePlate;
+  return data;
+}
+router$1.get("/delivery-notes", asyncHandler(async (_req, res) => {
+  const docs = await PurchaseSlip.find(deliveryNoteFilter).sort({ createdAt: -1 }).limit(100);
+  sendSuccess(res, { data: docs });
+}));
+router$1.get("/delivery-notes/:id", asyncHandler(async (req, res) => {
+  const doc = await PurchaseSlip.findOne({ _id: req.params.id, ...deliveryNoteFilter });
+  if (!doc) {
+    sendError(res, "Bon de livraison introuvable", 404);
+    return;
+  }
+  sendSuccess(res, doc);
+}));
+router$1.post("/delivery-notes/from-invoice/:invoiceId", asyncHandler(async (req, res) => {
+  const invoice = await Invoice.findById(req.params.invoiceId);
+  if (!invoice) {
+    sendError(res, "Facture introuvable", 404);
+    return;
+  }
+  const existing = await PurchaseSlip.findOne({
+    documentType: "delivery_note",
+    $or: [{ sourceInvoiceId: invoice._id }, { convertedInvoiceId: invoice._id }]
+  });
+  if (existing) {
+    sendSuccess(res, { slip: existing, created: false }, 200);
+    return;
+  }
+  const body = req.body;
+  const slip = await createDeliveryNote({
+    sourceInvoiceId: invoice._id,
+    customerId: invoice.customerId,
+    customerName: invoice.customerName,
+    customerAddress: invoice.customerAddress,
+    lines: mapInvoiceLinesToDeliveryLines(invoice.lines || []),
+    includeTva: invoice.includeTva,
+    blNumber: invoice.blNumber || invoice.reference,
+    bcNumber: invoice.bcNumber,
+    pieceNumber: invoice.pieceNumber,
+    representative: invoice.representative,
+    deliveryPerson: invoice.deliveryPerson,
+    deliveryDriverName: body.deliveryDriverName,
+    deliveryDriverCin: body.deliveryDriverCin,
+    deliveryVehiclePlate: body.deliveryVehiclePlate,
+    validUntil: invoice.validUntil,
+    isSettled: false
+  });
+  sendSuccess(res, { slip }, 201);
+}));
+router$1.post("/delivery-notes/convert", asyncHandler(async (req, res) => {
+  const body = req.body;
+  let mergedLines = body.lines ? [...body.lines] : [];
+  let customerId = body.customerId;
+  let customerName = body.customerName?.trim();
+  let customerAddress = body.customerAddress?.trim();
+  let includeTva = body.includeTva;
+  if (body.deliveryIds?.length) {
+    const deliveryDocs = await PurchaseSlip.find({
+      _id: { $in: body.deliveryIds },
+      ...deliveryNoteFilter,
+      convertedInvoiceId: null
+    });
+    if (!deliveryDocs.length) {
+      sendError(res, "Aucun bon de livraison valide sélectionné", 400);
+      return;
+    }
+    if (deliveryDocs.length !== body.deliveryIds.length) {
+      sendError(res, "Un ou plusieurs bons de livraison ne sont plus disponibles pour facturation", 400);
+      return;
+    }
+    const firstCustomerName = deliveryDocs[0].customerName?.trim();
+    const mixedCustomers = deliveryDocs.some(
+      (doc) => (doc.customerName?.trim() || "Client comptant") !== (firstCustomerName || "Client comptant")
+    );
+    if (mixedCustomers) {
+      sendError(res, "Les bons de livraison sélectionnés doivent appartenir au même client", 400);
+      return;
+    }
+    customerId = customerId || deliveryDocs[0].customerId?.toString();
+    customerName = customerName || deliveryDocs[0].customerName || "Client comptant";
+    customerAddress = customerAddress || deliveryDocs[0].customerAddress;
+    includeTva = includeTva ?? deliveryDocs[0].includeTva ?? false;
+    deliveryDocs[0];
+    const fromDeliveryNotes = deliveryDocs.flatMap(
+      (doc) => (doc.lines || []).map((line) => ({
+        productId: line.productId?.toString(),
+        reference: line.reference,
+        designation: line.designation || "",
+        quantity: line.quantity || 0,
+        unitPrice: line.unitPrice || 0,
+        discount: line.discount ?? 0,
+        tva: line.tva ?? 0,
+        totalHT: line.totalHT || 0,
+        totalTTC: line.totalTTC || 0
+      }))
+    );
+    mergedLines = [...mergedLines, ...fromDeliveryNotes];
+  }
+  if (!mergedLines.length) {
+    sendError(res, "Aucune ligne de livraison", 400);
+    return;
+  }
+  const normalizedLines = mergeDocumentLines(mergedLines);
+  const timbre = TIMBRE_FISCAL_AMOUNT;
+  const totals = buildDocumentTotals$1(normalizedLines, { includeTva, timbreFiscal: timbre });
+  const invoiceRef = await getNextReference("invoice", true);
+  const primaryDelivery = body.deliveryIds?.length ? await PurchaseSlip.findById(body.deliveryIds[0]) : null;
+  const invoice = await Invoice.create({
+    reference: invoiceRef,
+    customerId: customerId || void 0,
+    customerName: customerName || "Client comptant",
+    customerAddress: customerAddress || void 0,
+    lines: normalizedLines.map((line) => ({
+      productId: line.productId,
+      reference: line.reference,
+      designation: line.designation,
+      quantity: line.quantity,
+      unitPrice: line.unitPrice,
+      discount: line.discount ?? 0,
+      tva: line.tva ?? 0,
+      totalHT: line.totalHT,
+      totalTTC: line.totalTTC
+    })),
+    totalHT: totals.totalHT,
+    totalTVA: totals.totalTVA,
+    timbreFiscal: timbre,
+    totalTTC: totals.totalTTC,
+    amountPaid: 0,
+    amountDue: totals.totalTTC,
+    isPaid: false,
+    includeTva: includeTva ?? false,
+    blNumber: body.deliveryIds?.length === 1 ? primaryDelivery?.reference : void 0,
+    deliveryPerson: primaryDelivery?.deliveryDriverName || primaryDelivery?.deliveryPerson,
+    representative: primaryDelivery?.representative
+  });
+  if (body.deliveryIds?.length) {
+    await PurchaseSlip.updateMany(
+      { _id: { $in: body.deliveryIds } },
+      { $set: { convertedInvoiceId: invoice._id, isSettled: true, amountDue: 0 } }
+    );
+  }
+  sendSuccess(res, { invoice, documentType: "invoice" }, 201);
+}));
+router$1.post("/delivery-notes", asyncHandler(async (req, res) => {
+  const body = req.body;
+  if (!body.lines?.length) {
+    sendError(res, "Aucune ligne de bon de livraison", 400);
+    return;
+  }
+  let lines = body.lines;
+  if (body.sourceInvoiceId) {
+    const invoice = await Invoice.findById(body.sourceInvoiceId);
+    if (invoice?.lines?.length) {
+      const invoiceLines = mapInvoiceLinesToDeliveryLines(invoice.lines);
+      lines = lines.map((line, index) => ({
+        ...invoiceLines[index],
+        ...line,
+        productId: line.productId || invoiceLines[index]?.productId,
+        designation: line.designation || invoiceLines[index]?.designation || "",
+        reference: line.reference || invoiceLines[index]?.reference || ""
+      }));
+    }
+  }
+  const slip = await createDeliveryNote({
+    sourceInvoiceId: body.sourceInvoiceId,
+    customerId: body.customerId,
+    customerName: body.customerName,
+    customerAddress: body.customerAddress,
+    lines,
+    includeTva: body.includeTva,
+    deliveryDriverName: body.deliveryDriverName,
+    deliveryDriverCin: body.deliveryDriverCin,
+    deliveryVehiclePlate: body.deliveryVehiclePlate,
+    isSettled: false
+  });
+  sendSuccess(res, { slip }, 201);
+}));
+router$1.get("/delivery-notes/:id/pdf", asyncHandler(async (req, res) => {
+  const doc = await PurchaseSlip.findOne({ _id: req.params.id, ...deliveryNoteFilter });
+  if (!doc) {
+    sendError(res, "Bon de livraison introuvable", 404);
+    return;
+  }
+  const settings = await Settings.findOne() ?? await Settings.create({});
+  const pdfBytes = await generateInvoicePdf(await enrichDeliveryNoteForPdf(doc), settings, "BON DE LIVRAISON");
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename=${doc.reference}.pdf`);
+  res.send(Buffer.from(pdfBytes));
+}));
+const router = express.Router();
+router.use(attachActor);
+router.get("/quotes", asyncHandler(async (_req, res) => {
+  const docs = await Quote.find().sort({ createdAt: -1 }).limit(100);
+  sendSuccess(res, { data: docs });
+}));
+router.post("/quotes", asyncHandler(async (req, res) => {
+  const body = req.body;
+  if (!body.lines?.length) {
+    sendError(res, "Aucune ligne de devis", 400);
+    return;
+  }
+  const totals = buildDocumentTotals$1(body.lines, { includeTva: body.includeTva, timbreFiscal: 0 });
+  const ref = await getNextReference("quote", true);
+  const quote = await Quote.create({
+    reference: ref,
+    customerId: body.customerId || void 0,
+    customerName: body.customerName?.trim() || "Client comptant",
+    customerAddress: body.customerAddress?.trim() || void 0,
+    lines: body.lines.map((line) => ({
+      productId: void 0,
+      reference: line.reference ?? "",
+      designation: line.designation,
+      quantity: line.quantity,
+      unitPrice: line.unitPrice,
+      discount: line.discount ?? 0,
+      tva: line.tva ?? 0,
+      totalHT: line.totalHT,
+      totalTVA: Math.max(0, (line.totalTTC || 0) - (line.totalHT || 0)),
+      totalTTC: line.totalTTC
+    })),
+    totalHT: totals.totalHT,
+    totalTVA: totals.totalTVA,
+    timbreFiscal: 0,
+    totalTTC: totals.totalTTC,
+    includeTva: body.includeTva ?? false,
+    validUntil: body.validUntil ? new Date(body.validUntil) : void 0
+  });
+  sendSuccess(res, { quote }, 201);
+}));
+router.get("/quotes/:id", asyncHandler(async (req, res) => {
+  const quote = await Quote.findById(req.params.id);
+  if (!quote) {
+    sendError(res, "Devis introuvable", 404);
+    return;
+  }
+  sendSuccess(res, quote);
+}));
+router.get("/quotes/:id/pdf", asyncHandler(async (req, res) => {
+  const settings = await Settings.findOne() ?? await Settings.create({});
+  const quote = await Quote.findById(req.params.id);
+  if (!quote) {
+    sendError(res, "Devis introuvable", 404);
+    return;
+  }
+  const pdfBytes = await generateInvoicePdf(quote, settings, "DEVIS");
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename=${quote.reference}.pdf`);
+  res.send(Buffer.from(pdfBytes));
+}));
+router.put("/quotes/:id", asyncHandler(async (req, res) => {
+  const body = req.body;
+  const quote = await Quote.findById(req.params.id);
+  if (!quote) {
+    sendError(res, "Devis introuvable", 404);
+    return;
+  }
+  if (body.customerName !== void 0) quote.customerName = body.customerName.trim();
+  if (body.customerAddress !== void 0) quote.customerAddress = body.customerAddress?.trim();
+  if (body.validUntil !== void 0) quote.validUntil = body.validUntil ? new Date(body.validUntil) : void 0;
+  if (body.includeTva !== void 0) quote.includeTva = body.includeTva;
+  if (body.lines?.length) {
+    const totals = buildDocumentTotals$1(body.lines, { includeTva: body.includeTva ?? quote.includeTva, timbreFiscal: 0 });
+    quote.lines = body.lines.map((line) => ({
+      productId: void 0,
+      reference: line.reference ?? "",
+      designation: line.designation,
+      quantity: line.quantity,
+      unitPrice: line.unitPrice,
+      discount: line.discount ?? 0,
+      tva: line.tva ?? 0,
+      totalHT: line.totalHT,
+      totalTVA: Math.max(0, (line.totalTTC || 0) - (line.totalHT || 0)),
+      totalTTC: line.totalTTC
+    }));
+    quote.totalHT = totals.totalHT;
+    quote.totalTVA = totals.totalTVA;
+    quote.totalTTC = totals.totalTTC;
+  }
+  await quote.save();
+  sendSuccess(res, quote);
+}));
+router.delete("/quotes/:id", asyncHandler(async (req, res) => {
+  const quote = await Quote.findByIdAndDelete(req.params.id);
+  if (!quote) {
+    sendError(res, "Devis introuvable", 404);
+    return;
+  }
+  sendSuccess(res, { message: "Devis supprimé" });
 }));
 let serverPort$1 = DEFAULT_PORT;
 function createApp() {
@@ -3009,6 +4119,8 @@ function createApp() {
   app.get("/api", (_req, res) => {
     res.json({ success: true, data: { name: "Gestionnaire Quincaillerie API", version: "1.0.0" } });
   });
+  app.use("/api", router$a);
+  app.use("/api", router$9);
   app.use("/api", router$8);
   app.use("/api", router$7);
   app.use("/api", router$6);
@@ -3173,6 +4285,24 @@ function computeSale(db, body) {
   const linesInput = Array.isArray(body.lines) ? body.lines : [];
   const includeTva = Boolean(body.includeTva);
   const lines = linesInput.map((line) => {
+    const isCustom = line.isCustom === true || String(line.productId || "").startsWith("custom-") || line.productId && !/^[a-f\d]{24}$/i.test(String(line.productId));
+    if (isCustom) {
+      const quantity2 = Math.max(1, Number(line.quantity || 1));
+      const unitPrice = Math.max(0, Number(line.unitPrice || 0));
+      const discount2 = Math.max(0, Number(line.discount || 0));
+      const tva = Number(line.tva ?? 19);
+      const totalHT3 = roundMoney(applyDiscount(unitPrice * quantity2, discount2));
+      const totalTTC2 = roundMoney(totalHT3 + (includeTva ? totalHT3 * (tva / 100) : 0));
+      return {
+        reference: String(line.reference || "DIV"),
+        designation: String(line.designation || "Article divers"),
+        quantity: quantity2,
+        unitPrice,
+        discount: discount2,
+        totalHT: totalHT3,
+        totalTTC: totalTTC2
+      };
+    }
     const product = db.products.find((item) => item._id === line.productId);
     if (!product) throw new Error("Produit demo introuvable");
     const quantity = Math.max(1, Number(line.quantity || 1));
@@ -3191,13 +4321,7 @@ function computeSale(db, body) {
     };
   });
   const totalHT = roundMoney(lines.reduce((sum, line) => sum + line.totalHT, 0));
-  const fodec = calculateFodec(
-    lines.reduce((sum, line) => {
-      const product = db.products.find((item) => item._id === line.productId);
-      return sum + (product?.subjectToFodec ? line.totalHT : 0);
-    }, 0)
-  );
-  const totalBeforeStamp = roundMoney(lines.reduce((sum, line) => sum + line.totalTTC, 0) + fodec);
+  const totalBeforeStamp = roundMoney(lines.reduce((sum, line) => sum + line.totalTTC, 0));
   const paymentMethod = String(body.paymentMethod || "cash");
   const cashReceived = body.cashReceived === void 0 ? totalBeforeStamp + TIMBRE_FISCAL_AMOUNT : Number(body.cashReceived);
   const paidAmount = paymentMethod === "credit" ? 0 : Math.min(cashReceived, totalBeforeStamp + TIMBRE_FISCAL_AMOUNT);
@@ -3284,7 +4408,6 @@ function createDemoApp() {
       profitMargin: Number(req.body.profitMargin || 25),
       discount: Number(req.body.discount || 0),
       tva: Number(req.body.tva || 19),
-      subjectToFodec: Boolean(req.body.subjectToFodec),
       stock: Number(req.body.stock || 0),
       minStock: Number(req.body.minStock || 0),
       unit: String(req.body.unit || "piece"),
@@ -3363,7 +4486,7 @@ function createDemoApp() {
       if (!product) continue;
       const before = product.stock;
       product.stock = Math.max(0, product.stock - line.quantity);
-      db.stockMovements.unshift({ _id: makeId("movement", db), createdAt: nowIso(), type: "out", reason: "sale", quantity: line.quantity, stockBefore: before, stockAfter: product.stock, productId: { designation: product.designation } });
+      db.stockMovements.unshift({ _id: makeId("movement", db), createdAt: nowIso(), type: "out", reason: "vente", quantity: line.quantity, stockBefore: before, stockAfter: product.stock, productId: { designation: product.designation } });
     }
     if (documentType === "invoice") db.invoices.unshift(doc);
     else db.purchaseSlips.unshift(doc);
@@ -3378,12 +4501,17 @@ function createDemoApp() {
   app.get("/api/purchase-slips/:id/receipt", (_req, res) => send(res, { data: Buffer.from("DEMO RECEIPT").toString("base64") }));
   app.get("/api/stock/valuation", async (_req, res) => {
     const db = await loadDb();
+    const lowStock = db.products.filter((p) => p.stock <= p.minStock);
     send(res, {
       totalProducts: db.products.length,
-      purchaseValue: roundMoney(db.products.reduce((sum, p) => sum + p.purchasePrice * p.stock, 0)),
-      saleValue: roundMoney(db.products.reduce((sum, p) => sum + p.salePrice * p.stock, 0)),
-      lowStockProducts: db.products.filter((p) => p.stock <= p.minStock)
+      currentStock: db.products.reduce((sum, p) => sum + p.stock, 0),
+      restockCount: lowStock.length,
+      lowStockProducts: lowStock
     });
+  });
+  app.get("/api/stock/alerts", async (_req, res) => {
+    const db = await loadDb();
+    send(res, db.products.filter((p) => p.stock <= p.minStock));
   });
   app.get("/api/stock/movements", async (req, res) => send(res, page((await loadDb()).stockMovements, req)));
   app.post("/api/stock/adjust", async (req, res) => {
@@ -3469,6 +4597,74 @@ function isDemoMode() {
     process.env.PORTABLE_EXECUTABLE_FILE
   ];
   return markers.some((value) => value?.toLowerCase().includes("demo"));
+}
+const MONGODB_DIR = path.join(process.env.LOCALAPPDATA || electron.app.getPath("userData"), "GestionnaireQuincaillerie", "mongodb");
+const DATA_DIR = path.join(process.env.LOCALAPPDATA || electron.app.getPath("userData"), "GestionnaireQuincaillerie", "data");
+const LOG_DIR = path.join(process.env.LOCALAPPDATA || electron.app.getPath("userData"), "GestionnaireQuincaillerie", "logs");
+let mongodProcess = null;
+async function ensureDirectories() {
+  await fs.mkdir(DATA_DIR, { recursive: true });
+  await fs.mkdir(LOG_DIR, { recursive: true });
+}
+async function isMongoDBRunning() {
+  return new Promise((resolve) => {
+    child_process.exec('tasklist /FI "IMAGENAME eq mongod.exe"', (error, stdout) => {
+      if (stdout.includes("mongod.exe")) {
+        resolve(true);
+      } else {
+        resolve(false);
+      }
+    });
+  });
+}
+async function startMongoDB() {
+  try {
+    await ensureDirectories();
+    const alreadyRunning = await isMongoDBRunning();
+    if (alreadyRunning) {
+      console.log("[MongoDB] Already running");
+      return true;
+    }
+    const mongodPath = path.join(MONGODB_DIR, "bin", "mongod.exe");
+    const logPath = path.join(LOG_DIR, "mongodb.log");
+    try {
+      await fs.access(mongodPath);
+    } catch {
+      console.error("[MongoDB] mongod.exe not found at:", mongodPath);
+      return false;
+    }
+    mongodProcess = child_process.spawn(mongodPath, [
+      "--dbpath",
+      DATA_DIR,
+      "--logpath",
+      logPath,
+      "--bind_ip",
+      "127.0.0.1",
+      "--port",
+      "27017"
+    ]);
+    mongodProcess.on("error", (err) => {
+      console.error("[MongoDB] Failed to start:", err);
+    });
+    mongodProcess.on("exit", (code) => {
+      console.log("[MongoDB] Exited with code:", code);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 3e3));
+    const isRunning = await isMongoDBRunning();
+    if (isRunning) {
+      console.log("[MongoDB] Started successfully");
+      return true;
+    } else {
+      console.error("[MongoDB] Failed to start");
+      return false;
+    }
+  } catch (error) {
+    console.error("[MongoDB] Error starting MongoDB:", error);
+    return false;
+  }
+}
+function getMongoDBUri() {
+  return "mongodb://127.0.0.1:27017/gestionnaire_quincaillerie";
 }
 const LICENSE_SERVER_URL = "https://licenceskayapps.duckdns.org/api/v1/client";
 const PRODUCT_SLUG = "hardware-store";
@@ -3854,13 +5050,27 @@ async function retryPendingActivation() {
   return activateLicense(pending);
 }
 let mainWindow = null;
+const _udOverride = process.env.ELECTRON_USER_DATA || process.env.ELECTRON_USERDATA;
+if (_udOverride) {
+  try {
+    electron.app.setPath("userData", _udOverride);
+    console.log("[APP] userData overridden to:", electron.app.getPath("userData"));
+  } catch (err) {
+    console.error("[APP] Failed to set userData override:", err);
+  }
+}
 async function initApp() {
   if (isDemoMode()) {
     console.log("[DEMO] Starting JSON demo mode");
     await startDemoServer(DEFAULT_PORT);
     return;
   }
-  let mongoUri = DEFAULT_MONGO_URI;
+  const mongoStarted = await startMongoDB();
+  if (!mongoStarted) {
+    console.error("[APP] Failed to start MongoDB");
+    return;
+  }
+  let mongoUri = getMongoDBUri();
   try {
     await connectDatabase(mongoUri);
     await seedDatabase();
@@ -3873,7 +5083,25 @@ async function initApp() {
   }
   await startServer(DEFAULT_PORT);
 }
-function createWindow() {
+async function getAppTitle() {
+  if (isDemoMode()) {
+    return "Gestionnaire Quincaillerie (Demo)";
+  }
+  try {
+    const settings = await Settings.findOne().exec();
+    if (settings?.storeName) {
+      return settings.storeName;
+    }
+    if (settings?.companyName) {
+      return settings.companyName;
+    }
+  } catch (err) {
+    console.error("[APP] Failed to load settings for title:", err);
+  }
+  return "Gestionnaire Quincaillerie";
+}
+async function createWindow() {
+  const title = await getAppTitle();
   mainWindow = new electron.BrowserWindow({
     width: 1400,
     height: 900,
@@ -3881,7 +5109,7 @@ function createWindow() {
     minHeight: 700,
     show: false,
     autoHideMenuBar: true,
-    title: "Gestionnaire Quincaillerie",
+    title,
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.js"),
       contextIsolation: true,
@@ -3919,13 +5147,30 @@ function registerIpcHandlers() {
   electron.ipcMain.handle("print:a4", async (_event, pdfBase64) => {
     if (!mainWindow) return { success: false, error: "Fenêtre non disponible" };
     try {
-      const pdfWindow = new electron.BrowserWindow({ show: false });
+      const pdfWindow = new electron.BrowserWindow({
+        show: true,
+        width: 800,
+        height: 600,
+        title: "Aperçu avant impression",
+        autoHideMenuBar: true,
+        webPreferences: {
+          nodeIntegration: false,
+          contextIsolation: true
+        }
+      });
       const dataUrl = `data:application/pdf;base64,${pdfBase64}`;
       await pdfWindow.loadURL(dataUrl);
-      await pdfWindow.webContents.print({ silent: false, printBackground: true });
-      pdfWindow.close();
+      pdfWindow.webContents.on("did-finish-load", () => {
+        setTimeout(() => {
+          pdfWindow.webContents.print({ silent: false, printBackground: true });
+        }, 500);
+      });
+      pdfWindow.on("closed", () => {
+        pdfWindow.destroy();
+      });
       return { success: true };
     } catch (err) {
+      console.error("[Print] A4 print error:", err);
       return { success: false, error: String(err) };
     }
   });
@@ -3956,6 +5201,7 @@ function registerIpcHandlers() {
   electron.ipcMain.handle("license:retryPending", () => retryPendingActivation());
 }
 electron.app.whenReady().then(async () => {
+  console.log("[APP] userData path:", electron.app.getPath("userData"));
   await initApp();
   registerIpcHandlers();
   createWindow();

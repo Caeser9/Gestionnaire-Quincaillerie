@@ -1,5 +1,6 @@
 import { useTheme } from '@renderer/contexts/ThemeContext'
 import { useLicense } from '@renderer/contexts/LicenseContext'
+import { useSettings } from '@renderer/contexts/SettingsContext'
 import { ROUTE_MODULE_MAP } from '@shared/constants/license'
 import {
   Building2,
@@ -13,6 +14,7 @@ import {
   Receipt,
   Settings,
   ShoppingCart,
+  Store,
   Sun,
   Users,
   Wallet,
@@ -28,7 +30,7 @@ const navGroups = [
     label: 'Principal',
     items: [
       { path: '/', label: 'Tableau de bord', icon: LayoutDashboard },
-      { path: '/pos', label: 'Point de vente', icon: ShoppingCart, highlight: true }
+      { path: '/pos', label: 'Facturation', icon: ShoppingCart, highlight: true as const }
     ]
   },
   {
@@ -48,7 +50,7 @@ const navGroups = [
   {
     label: 'Comptabilité',
     items: [
-      { path: '/invoices', label: 'Factures & Bons', icon: Receipt },
+      { path: '/invoices', label: 'Gestion des transactions', icon: Receipt },
       { path: '/client-debts', label: 'Suivi Clients & Dettes', icon: Wallet },
       { path: '/finance', label: 'Recettes & Bénéfices', icon: ChartPie }
     ]
@@ -66,6 +68,18 @@ const navGroups = [
   }
 ] as const
 
+function isNavItemActive(path: string, pathname: string): boolean {
+  if (path === '/invoices') {
+    return (
+      pathname === '/invoices' ||
+      pathname.startsWith('/delivery-notes') ||
+      pathname.startsWith('/quotes')
+    )
+  }
+  if (path === '/') return pathname === '/'
+  return pathname === path || pathname.startsWith(`${path}/`)
+}
+
 function isNavItemVisible(path: string, authorizedModules: string[]): boolean {
   const moduleKey = ROUTE_MODULE_MAP[path]
   if (moduleKey === null || moduleKey === undefined) return true
@@ -75,8 +89,21 @@ function isNavItemVisible(path: string, authorizedModules: string[]): boolean {
 export function Layout({ children }: { children: ReactNode }) {
   const { theme, toggleTheme } = useTheme()
   const { authorizedModules } = useLicense()
+  const { storeDisplayName, storeIcon } = useSettings()
   const location = useLocation()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+
+  const iconMap = {
+    store: Store,
+    wrench: Wrench,
+    shopping: ShoppingCart,
+    building: Building2,
+    factory: Warehouse,
+    briefcase: Package
+  }
+
+  const StoreIcon = iconMap[storeIcon as keyof typeof iconMap] || Store
 
   const filteredNavGroups = navGroups
     .map((group) => ({
@@ -87,11 +114,7 @@ export function Layout({ children }: { children: ReactNode }) {
 
   const currentPage = filteredNavGroups
     .flatMap((g) => g.items)
-    .find(
-      (item) =>
-        item.path === location.pathname ||
-        (item.path !== '/' && location.pathname.startsWith(item.path))
-    )
+    .find((item) => isNavItemActive(item.path, location.pathname))
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50 dark:bg-slate-950">
@@ -103,32 +126,41 @@ export function Layout({ children }: { children: ReactNode }) {
       )}
 
       <aside
-        className={`fixed lg:static inset-y-0 left-0 z-50 w-[270px] bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-sidebar transform transition-transform duration-200 lg:translate-x-0 flex flex-col ${
+        className={`fixed lg:static inset-y-0 left-0 z-50 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-sidebar transform transition-all duration-200 lg:translate-x-0 flex flex-col ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
+        } ${sidebarCollapsed ? 'lg:w-[84px]' : 'lg:w-[270px]'}`}
       >
-        <div className="flex items-center gap-3 px-5 py-5 border-b border-slate-100 dark:border-slate-800">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center shadow-md shadow-primary-500/25">
-            <Wrench size={20} className="text-white" />
+        <div className={`flex items-center border-b border-slate-100 dark:border-slate-800 ${sidebarCollapsed ? 'px-2 py-4' : 'px-3 py-5'}`}>
+          <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 shadow-md shadow-primary-500/25 ${sidebarCollapsed ? 'hidden' : 'flex'}`}>
+            <StoreIcon size={20} className="text-white" />
           </div>
-          <div className="flex-1 min-w-0">
-            <h1 className="text-base font-bold text-slate-900 dark:text-white leading-tight">
-              Quincaillerie
+          <div className={`ml-3 min-w-0 flex-1 ${sidebarCollapsed ? 'hidden' : 'block'}`}>
+            <h1 className="text-base font-bold leading-tight text-slate-900 dark:text-white truncate">
+              {storeDisplayName}
             </h1>
-            <p className="text-xs text-slate-400 truncate">Gestion magasin</p>
+            <p className="truncate text-xs text-slate-400">Gestion magasin</p>
           </div>
-          <button
-            className="lg:hidden btn-ghost p-1.5 rounded-lg"
-            onClick={() => setSidebarOpen(false)}
-          >
-            <X size={18} />
-          </button>
+          <div className={`flex items-center ${sidebarCollapsed ? 'ml-0 w-full justify-center' : 'ml-auto'}`}>
+            <button
+              className="hidden lg:flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-primary-300 hover:text-primary-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-primary-500 dark:hover:text-primary-400"
+              onClick={() => setSidebarCollapsed((value) => !value)}
+              aria-label={sidebarCollapsed ? 'Afficher la barre latérale' : 'Masquer la barre latérale'}
+            >
+              <Menu size={18} />
+            </button>
+            <button
+              className="lg:hidden btn-ghost p-1.5 rounded-lg"
+              onClick={() => setSidebarOpen(false)}
+            >
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
+        <nav className={`flex-1 overflow-y-auto py-4 ${sidebarCollapsed ? 'px-2' : 'px-3'}`}>
           {filteredNavGroups.map((group) => (
-            <div key={group.label}>
-              <p className="px-3 mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+            <div key={group.label} className="mb-5 last:mb-0">
+              <p className={`mb-2 px-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400 ${sidebarCollapsed ? 'hidden' : 'block'}`}>
                 {group.label}
               </p>
               <div className="space-y-0.5">
@@ -138,14 +170,16 @@ export function Layout({ children }: { children: ReactNode }) {
                     to={item.path}
                     end={item.path === '/'}
                     onClick={() => setSidebarOpen(false)}
-                    className={({ isActive }) =>
-                      isActive
-                        ? 'nav-item-active nav-item'
-                        : `nav-item ${item.highlight ? 'text-primary-600 dark:text-primary-400' : ''}`
-                    }
+                    title={sidebarCollapsed ? item.label : undefined}
+                    className={({ isActive }) => {
+                      const active = isActive || isNavItemActive(item.path, location.pathname)
+                      return active
+                        ? `nav-item-active nav-item ${sidebarCollapsed ? 'justify-center' : ''}`
+                        : `nav-item ${item.highlight ? 'text-primary-600 dark:text-primary-400' : ''} ${sidebarCollapsed ? 'justify-center' : ''}`
+                    }}
                   >
                     <item.icon size={18} className="shrink-0" />
-                    <span className="truncate">{item.label}</span>
+                    <span className={`truncate ${sidebarCollapsed ? 'hidden' : ''}`}>{item.label}</span>
                   </NavLink>
                 ))}
               </div>
@@ -153,13 +187,14 @@ export function Layout({ children }: { children: ReactNode }) {
           ))}
         </nav>
 
-        <div className="p-3 border-t border-slate-100 dark:border-slate-800">
+        <div className={`border-t border-slate-100 dark:border-slate-800 ${sidebarCollapsed ? 'p-2' : 'p-3'}`}>
           <button
             onClick={toggleTheme}
-            className="flex items-center gap-2 w-full px-3 py-2.5 text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors"
+            title={sidebarCollapsed ? (theme === 'dark' ? 'Mode clair' : 'Mode sombre') : undefined}
+            className={`flex w-full items-center rounded-xl text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800 ${sidebarCollapsed ? 'justify-center px-2 py-2.5' : 'gap-2 px-3 py-2.5'}`}
           >
             {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-            {theme === 'dark' ? 'Mode clair' : 'Mode sombre'}
+            <span className={sidebarCollapsed ? 'hidden' : ''}>{theme === 'dark' ? 'Mode clair' : 'Mode sombre'}</span>
           </button>
         </div>
       </aside>
@@ -170,8 +205,8 @@ export function Layout({ children }: { children: ReactNode }) {
             <Menu size={20} />
           </button>
           <div>
-            <h1 className="font-bold text-slate-900 dark:text-white text-sm">
-              {currentPage?.label || 'Quincaillerie'}
+            <h1 className="font-bold text-slate-900 dark:text-white text-sm truncate">
+              {storeDisplayName}
             </h1>
           </div>
         </header>

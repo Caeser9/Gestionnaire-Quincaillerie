@@ -16,7 +16,7 @@ const productSchema = new mongoose.Schema(
     barcode: { type: String, sparse: true, index: true },
     designation: { type: String, required: true, index: true },
     description: String,
-    categoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'Category', required: true },
+    categoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'Category' },
     subCategoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'SubCategory' },
     brand: String,
     supplierId: { type: mongoose.Schema.Types.ObjectId, ref: 'Supplier' },
@@ -25,7 +25,6 @@ const productSchema = new mongoose.Schema(
     profitMargin: { type: Number, required: true, default: 25 },
     discount: { type: Number, required: true, default: 0 },
     tva: { type: Number, required: true, default: 19 },
-    subjectToFodec: { type: Boolean, default: false },
     stock: { type: Number, required: true, default: 0 },
     minStock: { type: Number, required: true, default: 0 },
     unit: { type: String, required: true, default: 'pièce' },
@@ -79,6 +78,7 @@ const customerSchema = new mongoose.Schema(
     phone: String,
     address: String,
     email: String,
+    matricule: String,
     creditBalance: { type: Number, default: 0 },
     totalPurchases: { type: Number, default: 0 },
     isDeleted: { type: Boolean, default: false }
@@ -150,7 +150,7 @@ const supplierInvoiceSchema = new mongoose.Schema(
 
 const saleLineSchema = new mongoose.Schema(
   {
-    productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
+    productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
     reference: String,
     designation: String,
     quantity: Number,
@@ -169,11 +169,11 @@ const saleSchema = new mongoose.Schema(
     invoiceId: { type: mongoose.Schema.Types.ObjectId, ref: 'Invoice' },
     purchaseSlipId: { type: mongoose.Schema.Types.ObjectId, ref: 'PurchaseSlip' },
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
+    customerAddress: String,
     cashierId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     lines: [saleLineSchema],
     totalHT: { type: Number, default: 0 },
     totalTVA: { type: Number, default: 0 },
-    totalFodec: { type: Number, default: 0 },
     timbreFiscal: { type: Number, default: 0 },
     totalTTC: { type: Number, default: 0 },
     amountPaid: { type: Number, default: 0 },
@@ -183,6 +183,12 @@ const saleSchema = new mongoose.Schema(
       enum: ['cash', 'card', 'mixed', 'credit'],
       required: true
     },
+    bcNumber: String,
+    blNumber: String,
+    pieceNumber: String,
+    representative: String,
+    deliveryPerson: String,
+    validUntil: Date,
     cashReceived: Number,
     cardAmount: Number,
     change: Number,
@@ -195,19 +201,36 @@ const saleSchema = new mongoose.Schema(
 const purchaseSlipSchema = new mongoose.Schema(
   {
     reference: { type: String, required: true, unique: true },
-    saleId: { type: mongoose.Schema.Types.ObjectId, ref: 'Sale', required: true },
+    documentType: {
+      type: String,
+      enum: ['delivery_note', 'purchase_slip'],
+      default: 'purchase_slip'
+    },
+    saleId: { type: mongoose.Schema.Types.ObjectId, ref: 'Sale', default: null },
+    sourceInvoiceId: { type: mongoose.Schema.Types.ObjectId, ref: 'Invoice' },
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
     customerName: String,
+    customerAddress: String,
+    customerMatricule: String,
     lines: [saleLineSchema],
     totalHT: { type: Number, default: 0 },
     totalTVA: { type: Number, default: 0 },
-    totalFodec: { type: Number, default: 0 },
     timbreFiscal: { type: Number, default: 0 },
     totalTTC: { type: Number, default: 0 },
     amountPaid: { type: Number, default: 0 },
     amountDue: { type: Number, default: 0 },
     isSettled: { type: Boolean, default: false },
     convertedInvoiceId: { type: mongoose.Schema.Types.ObjectId, ref: 'Invoice' },
+    bcNumber: String,
+    blNumber: String,
+    pieceNumber: String,
+    representative: String,
+    deliveryPerson: String,
+    deliveryDriverName: String,
+    deliveryDriverCin: String,
+    deliveryVehiclePlate: String,
+    vehicleRegistration: String,
+    validUntil: Date,
     includeTva: { type: Boolean, default: false }
   },
   { timestamps: true }
@@ -216,18 +239,24 @@ const purchaseSlipSchema = new mongoose.Schema(
 const invoiceSchema = new mongoose.Schema(
   {
     reference: { type: String, required: true, unique: true },
-    saleId: { type: mongoose.Schema.Types.ObjectId, ref: 'Sale', required: true },
+    saleId: { type: mongoose.Schema.Types.ObjectId, ref: 'Sale' },
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
     customerName: String,
+    customerAddress: String,
     lines: [saleLineSchema],
     totalHT: { type: Number, default: 0 },
     totalTVA: { type: Number, default: 0 },
-    totalFodec: { type: Number, default: 0 },
     timbreFiscal: { type: Number, default: 0 },
     totalTTC: { type: Number, default: 0 },
     amountPaid: { type: Number, default: 0 },
     amountDue: { type: Number, default: 0 },
     isPaid: { type: Boolean, default: true },
+    bcNumber: String,
+    blNumber: String,
+    pieceNumber: String,
+    representative: String,
+    deliveryPerson: String,
+    validUntil: Date,
     includeTva: { type: Boolean, default: false }
   },
   { timestamps: true }
@@ -258,7 +287,7 @@ const stockMovementSchema = new mongoose.Schema(
     type: { type: String, enum: ['in', 'out'], required: true },
     reason: {
       type: String,
-      enum: ['purchase', 'sale', 'correction', 'inventory'],
+      enum: ['achat', 'vente', 'correction', 'inventaire'],
       required: true
     },
     quantity: { type: Number, required: true },
@@ -294,10 +323,13 @@ const settingsSchema = new mongoose.Schema(
     companyName: { type: String, required: true, default: 'Ma Quincaillerie' },
     companyAddress: String,
     companyPhone: String,
+    companyFax: String,
+    companyMatriculeFiscal: String,
+    companyTvaCode: String,
+    companyRC: String,
     companyLogo: String,
     defaultTva: { type: Number, default: 19 },
     currency: { type: String, default: 'DT' },
-    invoiceFormat: { type: String, default: 'FAC-{year}-{number}' },
     mongoUri: { type: String, default: 'mongodb://127.0.0.1:27017/quincaillerie' }
   },
   { timestamps: true }
@@ -350,6 +382,41 @@ export const Sale = mongoose.models.Sale ?? mongoose.model('Sale', saleSchema)
 export const PurchaseSlip =
   mongoose.models.PurchaseSlip ?? mongoose.model('PurchaseSlip', purchaseSlipSchema)
 export const Invoice = mongoose.models.Invoice ?? mongoose.model('Invoice', invoiceSchema)
+
+const quoteLineSchema = new mongoose.Schema(
+  {
+    productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
+    reference: String,
+    designation: String,
+    quantity: Number,
+    unitPrice: Number,
+    discount: { type: Number, default: 0 },
+    tva: Number,
+    totalHT: Number,
+    totalTVA: Number,
+    totalTTC: Number
+  },
+  { _id: false }
+)
+
+const quoteSchema = new mongoose.Schema(
+  {
+    reference: { type: String, required: true, unique: true },
+    customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
+    customerName: String,
+    customerAddress: String,
+    lines: [quoteLineSchema],
+    totalHT: { type: Number, default: 0 },
+    totalTVA: { type: Number, default: 0 },
+    timbreFiscal: { type: Number, default: 0 },
+    totalTTC: { type: Number, default: 0 },
+    includeTva: { type: Boolean, default: false },
+    validUntil: Date
+  },
+  { timestamps: true }
+)
+
+export const Quote = mongoose.models.Quote ?? mongoose.model('Quote', quoteSchema)
 export const Payment = mongoose.models.Payment ?? mongoose.model('Payment', paymentSchema)
 export const StockMovement = mongoose.models.StockMovement ?? mongoose.model('StockMovement', stockMovementSchema)
 export const InventoryAdjustment =

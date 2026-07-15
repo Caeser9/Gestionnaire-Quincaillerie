@@ -76,6 +76,7 @@ export default function ReportsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        back
         title="Rapports"
         subtitle="Analyse des ventes, bénéfices et performances"
         actions={

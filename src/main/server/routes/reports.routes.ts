@@ -17,13 +17,16 @@ router.get('/dashboard', asyncHandler(async (_req, res) => {
 
   const todayRevenue = todaySales.reduce((sum, s) => sum + s.totalTTC, 0)
 
-  const productIds = todaySales.flatMap((s) => s.lines.map((l) => l.productId))
+  const productIds = todaySales.flatMap((s) =>
+    s.lines.map((l) => l.productId).filter((id): id is NonNullable<typeof id> => !!id)
+  )
   const products = await Product.find({ _id: { $in: productIds } }).lean()
   const productMap = new Map(products.map((p) => [p._id.toString(), p]))
 
   let profit = 0
   for (const sale of todaySales) {
     for (const line of sale.lines) {
+      if (!line.productId) continue
       const product = productMap.get(line.productId.toString())
       if (product) {
         profit += line.totalHT! - product.purchasePrice * line.quantity
@@ -62,6 +65,7 @@ router.get('/dashboard', asyncHandler(async (_req, res) => {
   const topProducts = await Sale.aggregate([
     { $match: { isCancelled: false } },
     { $unwind: '$lines' },
+    { $match: { 'lines.productId': { $exists: true, $ne: null } } },
     {
       $group: {
         _id: '$lines.productId',
@@ -126,6 +130,7 @@ router.get('/reports/top-products', asyncHandler(async (req, res) => {
   const top = await Sale.aggregate([
     { $match: { isCancelled: false } },
     { $unwind: '$lines' },
+    { $match: { 'lines.productId': { $exists: true, $ne: null } } },
     {
       $group: {
         _id: '$lines.productId',
@@ -179,7 +184,16 @@ router.get('/reports/profit', asyncHandler(async (req, res) => {
   }
 
   const sales = await Sale.find(filter)
-  const productIds = [...new Set(sales.flatMap((s) => s.lines.map((l) => l.productId.toString())))]
+  const productIds = [
+    ...new Set(
+      sales.flatMap((s) =>
+        s.lines
+          .map((l) => l.productId)
+          .filter((id): id is NonNullable<typeof id> => !!id)
+          .map((id) => id.toString())
+      )
+    )
+  ]
   const products = await Product.find({ _id: { $in: productIds } })
   const productMap = new Map(products.map((p) => [p._id.toString(), p]))
 
@@ -188,6 +202,7 @@ router.get('/reports/profit', asyncHandler(async (req, res) => {
   for (const sale of sales) {
     revenue += sale.totalTTC
     for (const line of sale.lines) {
+      if (!line.productId) continue
       const product = productMap.get(line.productId.toString())
       if (product) cost += product.purchasePrice * line.quantity
     }

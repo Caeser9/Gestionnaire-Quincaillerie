@@ -27,16 +27,11 @@ export const productSchema = z.object({
   barcode: z.string().optional(),
   designation: z.string().min(1, 'Désignation requise'),
   description: z.string().optional(),
-  categoryId: z.string().min(1, 'Catégorie requise'),
-  subCategoryId: optionalId,
   brand: z.string().optional(),
-  supplierId: optionalId,
   purchasePrice: z.number().min(0, 'Prix achat invalide'),
   salePrice: z.number().min(0, 'Prix vente invalide').optional(),
   profitMargin: z.number().min(0, 'Marge invalide').max(1000).default(25),
   discount: z.number().min(0, 'Remise invalide').max(100).default(0),
-  tva: z.number().min(0).max(100),
-  subjectToFodec: z.boolean().optional().default(false),
   stock: z.number().min(0).default(0),
   minStock: z.number().min(0).default(0),
   unit: z.string().min(1, 'Unité requise'),
@@ -69,6 +64,7 @@ export const customerSchema = z.object({
   name: z.string().min(1, 'Nom requis'),
   phone: z.string().optional(),
   address: z.string().optional(),
+  matricule: z.string().optional(),
   email: z.string().email('Email invalide').optional().or(z.literal(''))
 })
 
@@ -117,24 +113,76 @@ export const purchaseOrderPaySchema = z.object({
 export const saleSchema = z.object({
   customerId: optionalId,
   customerName: z.string().optional(),
+  customerAddress: z.string().optional(),
+  customerPhone: z.string().optional(),
+  customerMatricule: z.string().optional(),
   lines: z
     .array(
-      z.object({
-        productId: z.string().min(1),
-        quantity: z.number().min(1),
-        discount: z.number().optional()
-      })
+      z
+        .object({
+          productId: z.string().optional(),
+          isCustom: z.boolean().optional(),
+          reference: z.string().optional(),
+          designation: z.string().optional(),
+          unitPrice: z.coerce.number().optional(),
+          tva: z.coerce.number().optional(),
+          quantity: z.coerce.number().min(1),
+          discount: z.coerce.number().optional()
+        })
+        .superRefine((line, ctx) => {
+          const productId = line.productId?.trim()
+          const hasCatalogId = !!productId && /^[a-f\d]{24}$/i.test(productId)
+          const custom =
+            line.isCustom === true ||
+            (productId?.startsWith('custom-') ?? false) ||
+            (!!productId && !hasCatalogId)
+          if (custom) {
+            if (!line.designation?.trim()) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: 'Désignation requise pour un article personnalisé',
+                path: ['designation']
+              })
+            }
+            if (line.unitPrice === undefined || Number.isNaN(line.unitPrice) || line.unitPrice < 0) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: 'Prix unitaire requis pour un article personnalisé',
+                path: ['unitPrice']
+              })
+            }
+            return
+          }
+          if (!hasCatalogId) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: 'Produit requis',
+              path: ['productId']
+            })
+          }
+        })
     )
     .min(1, 'Panier vide'),
-  paymentMethod: z.enum(['cash', 'card', 'mixed', 'credit']),
+  paymentMethod: z.enum(['cash', 'card', 'mixed', 'credit']).default('cash'),
   amountPaid: z.number().min(0).optional(),
   cashReceived: z.number().optional(),
   cardAmount: z.number().optional(),
-  includeTva: z.boolean().optional().default(false)
+  bcNumber: z.string().optional(),
+  blNumber: z.string().optional(),
+  pieceNumber: z.string().optional(),
+  representative: z.string().optional(),
+  deliveryPerson: z.string().optional(),
+  deliveryDriverName: z.string().optional(),
+  deliveryDriverCin: z.string().optional(),
+  deliveryVehiclePlate: z.string().optional(),
+  validUntil: z.string().optional(),
+  createdAt: z.string().optional(),
+  includeTva: z.boolean().optional().default(false),
+  forceInvoice: z.boolean().optional().default(false)
 }).superRefine((data, ctx) => {
   const hasCustomer = !!(data.customerId || data.customerName?.trim())
   const isCredit = data.paymentMethod === 'credit'
-  const partialPaid = data.amountPaid !== undefined && data.amountPaid >= 0
+  const partialPaid = data.amountPaid !== undefined && data.amountPaid > 0
   if ((isCredit || partialPaid) && !hasCustomer) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -159,9 +207,12 @@ export const settingsSchema = z.object({
   companyName: z.string().min(1, 'Nom société requis'),
   companyAddress: z.string().optional(),
   companyPhone: z.string().optional(),
+  companyFax: z.string().optional(),
+  companyMatriculeFiscal: z.string().optional(),
+  companyTvaCode: z.string().optional(),
+  companyRC: z.string().optional(),
   defaultTva: z.coerce.number().min(0).max(100),
   currency: z.string().min(1),
-  invoiceFormat: z.string().min(1),
   mongoUri: z.string().min(1).optional()
 })
 

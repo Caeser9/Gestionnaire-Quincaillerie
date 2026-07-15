@@ -13,6 +13,7 @@ import type { PaginatedResult } from '@shared/types'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ClipboardList, Package, Plus, Trash2, Wallet, Zap } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import Pagination from '@renderer/components/ui/Pagination'
 import toast from 'react-hot-toast'
 import { QuickReceivePanel, type CartLine } from './QuickReceivePanel'
 
@@ -265,6 +266,8 @@ export default function PurchasesPage() {
         (o.supplierId?.companyName || o.supplierName || '').toLowerCase().includes(q)
     )
   }, [orders?.data, debouncedOrderSearch])
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 10
 
   const fillReceiveAll = () => {
     if (!orderToReceive) return
@@ -279,6 +282,7 @@ export default function PurchasesPage() {
   return (
     <div className="space-y-4">
       <PageHeader
+        back
         title="Achats"
         subtitle="Réception rapide et bons de commande fournisseurs"
         actions={
@@ -295,11 +299,10 @@ export default function PurchasesPage() {
         <button
           type="button"
           onClick={() => setActiveTab('quick')}
-          className={`px-4 py-2.5 text-sm font-medium rounded-t-lg transition-all flex items-center gap-2 ${
-            activeTab === 'quick'
+          className={`px-4 py-2.5 text-sm font-medium rounded-t-lg transition-all flex items-center gap-2 ${activeTab === 'quick'
               ? 'bg-white dark:bg-slate-900 text-primary-600 border-b-2 border-primary-500'
               : 'text-slate-500 hover:text-slate-700'
-          }`}
+            }`}
         >
           <Zap size={16} />
           Réception rapide
@@ -307,11 +310,10 @@ export default function PurchasesPage() {
         <button
           type="button"
           onClick={() => setActiveTab('orders')}
-          className={`px-4 py-2.5 text-sm font-medium rounded-t-lg transition-all flex items-center gap-2 ${
-            activeTab === 'orders'
+          className={`px-4 py-2.5 text-sm font-medium rounded-t-lg transition-all flex items-center gap-2 ${activeTab === 'orders'
               ? 'bg-white dark:bg-slate-900 text-primary-600 border-b-2 border-primary-500'
               : 'text-slate-500 hover:text-slate-700'
-          }`}
+            }`}
         >
           <ClipboardList size={16} />
           Bons de commande
@@ -358,7 +360,7 @@ export default function PurchasesPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredOrders.map((o) => (
+                {filteredOrders.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map((o) => (
                   <tr key={o._id}>
                     <td className="font-mono text-xs">{o.reference}</td>
                     <td>{o.supplierId?.companyName || o.supplierName}</td>
@@ -441,6 +443,11 @@ export default function PurchasesPage() {
                 }
               />
             )}
+            <Pagination
+              current={page}
+              totalPages={Math.max(1, Math.ceil((filteredOrders.length ?? 0) / PAGE_SIZE))}
+              onChange={(p) => setPage(p)}
+            />
           </div>
         </>
       )}
@@ -505,10 +512,13 @@ export default function PurchasesPage() {
             {lines.map((line) => (
               <div key={line.productId} className="flex gap-2 items-center">
                 <span className="flex-1 text-sm truncate">{line.designation}</span>
+                 <div className="flex flex-col gap-1">
+                    <label htmlFor={`quantity-${line.productId}`} className="text-xs font-medium text-slate-600 dark:text-slate-400">Quantité</label>
                 <Input
+                  style={{width:'6rem'}}
                   type="number"
                   min={1}
-                  className="w-20"
+                  className="w-20 input-number-sm"
                   value={line.quantity}
                   onChange={(e) => {
                     const updated = lines.map((l) =>
@@ -519,11 +529,15 @@ export default function PurchasesPage() {
                     setLines(updated)
                   }}
                 />
+                </div>
+                 <div className="flex flex-col gap-1">
+                    <label htmlFor={`price-${line.productId}`} className="text-xs font-medium text-slate-600 dark:text-slate-400">Prix HT</label>
                 <Input
+                  style={{width:'10rem'}}
                   type="number"
                   step="0.001"
                   min={0}
-                  className="w-28"
+                  className="w-28 input-number-sm"
                   value={line.unitPrice}
                   onChange={(e) => {
                     const updated = lines.map((l) =>
@@ -534,6 +548,7 @@ export default function PurchasesPage() {
                     setLines(updated)
                   }}
                 />
+                </div>
                 <button
                   type="button"
                   onClick={() => setLines(lines.filter((l) => l.productId !== line.productId))}
@@ -596,7 +611,7 @@ export default function PurchasesPage() {
               </div>
               <Input
                 type="number"
-                className="w-24"
+                className="w-32 input-number"
                 min={0}
                 max={remaining}
                 placeholder="Qté"
@@ -657,6 +672,7 @@ export default function PurchasesPage() {
                 step="0.001"
                 min={0}
                 max={receiveBatchHT}
+                className="input-number"
                 value={receivePartialAmount}
                 onChange={(e) => setReceivePartialAmount(e.target.value)}
               />
@@ -743,6 +759,7 @@ export default function PurchasesPage() {
           step="0.001"
           min={0}
           max={orderToPay?.amountDue ?? 0}
+          className="input-number"
           value={payAmount}
           onChange={(e) => setPayAmount(e.target.value)}
         />

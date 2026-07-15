@@ -10,7 +10,8 @@ import { formatCurrency } from '@renderer/lib/format'
 import type { PaginatedResult } from '@shared/types'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CreditCard, Pencil, Plus, Trash2 } from 'lucide-react'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import Pagination from '@renderer/components/ui/Pagination'
 import toast from 'react-hot-toast'
 
 interface Customer {
@@ -22,6 +23,7 @@ interface Customer {
   address?: string
   creditBalance: number
   totalPurchases: number
+  matricule?: string
 }
 
 interface OpenCredit {
@@ -31,7 +33,7 @@ interface OpenCredit {
   amountDue: number
 }
 
-const emptyForm = { name: '', phone: '', email: '', address: '' }
+const emptyForm = { name: '', phone: '', email: '', address: '' , matricule: ''}
 
 export default function CustomersPage() {
   const queryClient = useQueryClient()
@@ -43,6 +45,8 @@ export default function CustomersPage() {
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [editing, setEditing] = useState<Customer | null>(null)
   const [form, setForm] = useState(emptyForm)
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 10
 
   const { data, isLoading } = useQuery({
     queryKey: ['customers', debouncedSearch],
@@ -59,9 +63,9 @@ export default function CustomersPage() {
     mutationFn: (payload: typeof emptyForm) =>
       editing
         ? apiRequest(`/customers/${editing._id}`, {
-            method: 'PUT',
-            body: JSON.stringify(payload)
-          })
+          method: 'PUT',
+          body: JSON.stringify(payload)
+        })
         : apiRequest('/customers', { method: 'POST', body: JSON.stringify(payload) }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['customers'] })
@@ -94,6 +98,7 @@ export default function CustomersPage() {
   return (
     <div className="space-y-4">
       <PageHeader
+        back
         title="Clients"
         subtitle="Fichier clients, historique et gestion des crédits"
         actions={
@@ -151,55 +156,63 @@ export default function CustomersPage() {
             </tr>
           </thead>
           <tbody>
-            {data?.data?.map((c) => (
-              <tr key={c._id}>
-                <td className="font-mono text-xs">{c.reference}</td>
-                <td>{c.name}</td>
-                <td>{c.phone}</td>
-                <td>{formatCurrency(c.totalPurchases)}</td>
-                <td className={c.creditBalance > 0 ? 'text-red-600 font-semibold' : ''}>
-                  {formatCurrency(c.creditBalance)}
-                </td>
-                <td>
-                  <div className="flex gap-1">
-                    {c.creditBalance > 0 && (
+            {((data?.data ?? [])
+              .slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+              .map((c) => (
+                <tr key={c._id}>
+                  <td className="font-mono text-xs">{c.reference}</td>
+                  <td>{c.name}</td>
+                  <td>{c.phone}</td>
+                  <td>{formatCurrency(c.totalPurchases)}</td>
+                  <td className={c.creditBalance > 0 ? 'text-red-600 font-semibold' : ''}>
+                    {formatCurrency(c.creditBalance)}
+                  </td>
+                  <td>
+                    <div className="flex gap-1">
+                      {c.creditBalance > 0 && (
+                        <button
+                          onClick={() => {
+                            setPaymentOpen(c)
+                            setPaymentAmount(c.creditBalance)
+                          }}
+                          className="btn-ghost p-1 text-green-600"
+                        >
+                          <CreditCard size={16} />
+                        </button>
+                      )}
                       <button
                         onClick={() => {
-                          setPaymentOpen(c)
-                          setPaymentAmount(c.creditBalance)
+                          setEditing(c)
+                          setForm({
+                            name: c.name,
+                            phone: c.phone || '',
+                            email: c.email || '',
+                            address: c.address || '',
+                            matricule:c.matricule || ''
+                          })
+                          setModalOpen(true)
                         }}
-                        className="btn-ghost p-1 text-green-600"
+                        className="btn-ghost p-1"
                       >
-                        <CreditCard size={16} />
+                        <Pencil size={16} />
                       </button>
-                    )}
-                    <button
-                      onClick={() => {
-                        setEditing(c)
-                        setForm({
-                          name: c.name,
-                          phone: c.phone || '',
-                          email: c.email || '',
-                          address: c.address || ''
-                        })
-                        setModalOpen(true)
-                      }}
-                      className="btn-ghost p-1"
-                    >
-                      <Pencil size={16} />
-                    </button>
-                    <button
-                      onClick={() => setDeleteId(c._id)}
-                      className="btn-ghost p-1 text-red-600"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+                      <button
+                        onClick={() => setDeleteId(c._id)}
+                        className="btn-ghost p-1 text-red-600"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              )))}
           </tbody>
         </table>
+        <Pagination
+          current={page}
+          totalPages={Math.max(1, Math.ceil((data?.total ?? data?.data?.length ?? 0) / PAGE_SIZE))}
+          onChange={(p) => setPage(p)}
+        />
       </div>
 
       <Modal
@@ -226,6 +239,11 @@ export default function CustomersPage() {
           label="Adresse"
           value={form.address}
           onChange={(e) => setForm({ ...form, address: e.target.value })}
+        />
+        <Input
+          label="Matricule Fiscal"
+          value={form.matricule}
+          onChange={(e) => setForm({ ...form, matricule: e.target.value })}
         />
         <div className="flex justify-end gap-2 mt-4">
           <Button variant="secondary" onClick={() => setModalOpen(false)}>
@@ -255,6 +273,7 @@ export default function CustomersPage() {
           label="Montant"
           type="number"
           step="0.001"
+          className="input-number"
           value={paymentAmount}
           onChange={(e) => setPaymentAmount(+e.target.value)}
         />

@@ -5,6 +5,11 @@ directories:
 files:
   - out/**/*
   - package.json
+extraResources:
+  - from: resources/mongodb
+    to: mongodb
+    filter:
+      - "**/*"
 win:
   target:
     - nsis
@@ -15,3 +20,4 @@ nsis:
   installerLanguages:
     - fr
   language: '1036'
+  include: resources/installer.nsh

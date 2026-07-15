@@ -11,6 +11,7 @@ import type { PaginatedResult } from '@shared/types'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Eye, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
+import Pagination from '@renderer/components/ui/Pagination'
 import toast from 'react-hot-toast'
 import { SupplierActivityModal } from './SupplierActivityModal'
 
@@ -44,6 +45,8 @@ export default function SuppliersPage() {
   const [editing, setEditing] = useState<Supplier | null>(null)
   const [activitySupplier, setActivitySupplier] = useState<Supplier | null>(null)
   const [form, setForm] = useState(emptyForm)
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 10
 
   const { data, isLoading } = useQuery({
     queryKey: ['suppliers', debouncedSearch],
@@ -79,6 +82,7 @@ export default function SuppliersPage() {
   return (
     <div className="space-y-4">
       <PageHeader
+        back
         title="Fournisseurs"
         subtitle="Partenaires, achats, dettes et historique des opérations"
         actions={
@@ -115,7 +119,9 @@ export default function SuppliersPage() {
             </tr>
           </thead>
           <tbody>
-            {data?.data?.map((s) => (
+            {(data?.data ?? [])
+              .slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+              .map((s) => (
               <tr key={s._id}>
                 <td className="font-mono text-xs">{s.reference}</td>
                 <td className="font-medium">{s.companyName}</td>
@@ -162,9 +168,14 @@ export default function SuppliersPage() {
                   </div>
                 </td>
               </tr>
-            ))}
+              ))}
           </tbody>
         </table>
+        <Pagination
+          current={page}
+          totalPages={Math.max(1, Math.ceil((data?.total ?? data?.data?.length ?? 0) / PAGE_SIZE))}
+          onChange={(p) => setPage(p)}
+        />
       </div>
 
       <SupplierActivityModal

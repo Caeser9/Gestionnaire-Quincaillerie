@@ -12,11 +12,11 @@ import { formatCurrency } from '@renderer/lib/format'
 import { calculateSalePrice } from '@shared/utils'
 import type { PaginatedResult } from '@shared/types'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Download, Hash, Package, Pencil, Plus, Trash2, Upload, UserPlus } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { Download, Package, Pencil, Plus, Trash2, Upload } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import Pagination from '@renderer/components/ui/Pagination'
 import toast from 'react-hot-toast'
 import { read, utils } from 'xlsx'
-import { SupplierQuickCreateModal } from '../Suppliers/SupplierQuickCreateModal'
 
 const UNITS = ['pièce', 'kg', 'm', 'm²', 'L', 'boîte', 'paquet', 'rouleau']
 
@@ -26,54 +26,32 @@ interface Product {
   designation: string
   barcode?: string
   description?: string
-  categoryId?: { _id: string; name: string; prefix?: string } | string
-  subCategoryId?: string
+  categoryId?: { _id: string; name: string } | string
   brand?: string
-  supplierId?: string | { _id: string; companyName?: string }
   purchasePrice: number
   salePrice: number
   profitMargin: number
   discount: number
-  tva: number
-  subjectToFodec?: boolean
   stock: number
   minStock: number
   unit: string
   location?: string
 }
 
-interface Category {
-  _id: string
-  name: string
-  prefix: string
-}
-
 const emptyForm = {
+  reference: '',
   designation: '',
   barcode: '',
   description: '',
-  categoryId: '',
-  subCategoryId: '',
   brand: '',
-  supplierId: '',
   purchasePrice: 0,
   salePrice: 0,
   profitMargin: 25,
   discount: 0,
-  tva: 19,
-  subjectToFodec: false,
   stock: 0,
   minStock: 0,
   unit: 'pièce',
   location: ''
-}
-
-function getCategoryId(p: Product): string {
-  return typeof p.categoryId === 'object' ? p.categoryId?._id : (p.categoryId as string) || ''
-}
-
-function getCategoryName(p: Product): string {
-  return typeof p.categoryId === 'object' ? p.categoryId?.name || '' : ''
 }
 
 export default function ProductsPage() {
@@ -84,8 +62,8 @@ export default function ProductsPage() {
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [editing, setEditing] = useState<Product | null>(null)
   const [form, setForm] = useState(emptyForm)
-  const [activeTab, setActiveTab] = useState<string>('all')
-  const [supplierCreateOpen, setSupplierCreateOpen] = useState(false)
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 10
 
   const { data, isLoading } = useQuery({
     queryKey: ['products', debouncedSearch],
@@ -93,23 +71,6 @@ export default function ProductsPage() {
       apiRequest<PaginatedResult<Product>>(
         `/products?search=${debouncedSearch}&limit=100`
       )
-  })
-
-  const { data: categories } = useQuery({
-    queryKey: ['categories'],
-    queryFn: () => apiRequest<Category[]>('/categories')
-  })
-
-  const { data: suppliers } = useQuery({
-    queryKey: ['suppliers'],
-    queryFn: () => apiRequest<PaginatedResult<{ _id: string; companyName: string }>>('/suppliers?limit=200')
-  })
-
-  const { data: subcategories } = useQuery({
-    queryKey: ['subcategories', form.categoryId],
-    queryFn: () =>
-      apiRequest<Category[]>(`/subcategories?categoryId=${form.categoryId}`),
-    enabled: !!form.categoryId
   })
 
   const buildProductPayload = (form: typeof emptyForm) => {
@@ -143,30 +104,24 @@ export default function ProductsPage() {
     onError: (err: Error) => toast.error(err.message)
   })
 
-  const openCreate = (categoryId?: string) => {
+  const openCreate = () => {
     setEditing(null)
-    setForm({ ...emptyForm, categoryId: categoryId || '' })
+    setForm({ ...emptyForm })
     setModalOpen(true)
   }
 
   const openEdit = (p: Product) => {
     setEditing(p)
-    const catId = typeof p.categoryId === 'object' ? p.categoryId?._id : (p.categoryId as string) || ''
     setForm({
+      reference: p.reference,
       designation: p.designation,
       barcode: p.barcode || '',
       description: p.description || '',
-      categoryId: catId,
-      subCategoryId: (p.subCategoryId as string) || '',
       brand: p.brand || '',
-      supplierId:
-        typeof p.supplierId === 'object' ? p.supplierId?._id : (p.supplierId as string) || '',
       purchasePrice: p.purchasePrice,
       salePrice: p.salePrice,
       profitMargin: p.profitMargin,
       discount: p.discount,
-      tva: p.tva,
-      subjectToFodec: p.subjectToFodec ?? false,
       stock: p.stock,
       minStock: p.minStock,
       unit: p.unit,
@@ -180,49 +135,10 @@ export default function ProductsPage() {
     setEditing(null)
   }
 
-  /** Compute the auto-generated reference preview based on selected category */
-  const referencePreview = useMemo(() => {
-    if (editing) {
-      // When editing, show the existing reference as read-only
-      return editing.reference
-    }
-    if (!form.categoryId || !categories) return '—'
-    const cat = categories.find((c) => c._id === form.categoryId)
-    if (!cat) return '—'
-    return `${cat.prefix}XXXXXX (généré automatiquement)`
-  }, [editing, form.categoryId, categories])
-
-  /** Group products by category */
-  const productsByCategory = useMemo(() => {
-    if (!data?.data || !categories) return new Map<string, Product[]>()
-
-    const grouped = new Map<string, Product[]>()
-    // Initialize all categories with empty arrays
-    for (const cat of categories) {
-      grouped.set(cat._id, [])
-    }
-    // Distribute products
-    for (const p of data.data) {
-      const catId = getCategoryId(p)
-      if (grouped.has(catId)) {
-        grouped.get(catId)!.push(p)
-      } else {
-        // Products with unknown categories go to 'all'
-        const all = grouped.get('__all__') || []
-        all.push(p)
-        grouped.set('__all__', all)
-      }
-    }
-    return grouped
-  }, [data?.data, categories])
-
   const allProductsCount = data?.total ?? 0
-
-  // Compute active tab products
-  const activeProducts = useMemo(() => {
-    if (activeTab === 'all') return data?.data ?? []
-    return productsByCategory.get(activeTab) ?? []
-  }, [activeTab, data?.data, productsByCategory])
+  const activeProducts = data?.data ?? []
+  const totalPages = Math.max(1, Math.ceil(allProductsCount / PAGE_SIZE))
+  const pagedProducts = activeProducts.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   const handleExport = async () => {
     try {
@@ -261,11 +177,10 @@ export default function ProductsPage() {
     e.target.value = ''
   }
 
-  const tabCategories = categories ?? []
-
   return (
     <div className="space-y-5">
       <PageHeader
+        back
         title="Produits"
         subtitle={`${allProductsCount} produit${allProductsCount !== 1 ? 's' : ''} en catalogue`}
         actions={
@@ -300,55 +215,20 @@ export default function ProductsPage() {
         />
       </PageHeader>
 
-      {/* Tabs by category */}
-      <div className="flex flex-wrap gap-1 border-b border-slate-200 dark:border-slate-700 pb-px">
-        <button
-          onClick={() => setActiveTab('all')}
-          className={`px-4 py-2.5 text-sm font-medium rounded-t-lg transition-all ${
-            activeTab === 'all'
-              ? 'bg-white dark:bg-slate-900 text-primary-600 border-b-2 border-primary-500 shadow-sm'
-              : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50'
-          }`}
-        >
-          Tous
-          <span className="ml-1.5 text-xs text-slate-400">({allProductsCount})</span>
-        </button>
-        {tabCategories.map((cat) => {
-          const count = productsByCategory.get(cat._id)?.length ?? 0
-          return (
-            <button
-              key={cat._id}
-              onClick={() => setActiveTab(cat._id)}
-              className={`px-4 py-2.5 text-sm font-medium rounded-t-lg transition-all ${
-                activeTab === cat._id
-                  ? 'bg-white dark:bg-slate-900 text-primary-600 border-b-2 border-primary-500 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50'
-              }`}
-            >
-              <span className="font-mono text-xs mr-1.5 text-slate-400">{cat.prefix}</span>
-              {cat.name}
-              <span className="ml-1.5 text-xs text-slate-400">({count})</span>
-            </button>
-          )
-        })}
-      </div>
-
-      {/* Products table for active tab */}
-      <div className="table-container">
         <table className="table">
           <thead>
             <tr>
               <th>Référence</th>
               <th>Désignation</th>
               <th>Catégorie</th>
-              <th>Prix vente</th>
-              <th>Stock</th>
+              <th>Prix HT</th>
+              <th>Quantité</th>
               <th>Unité</th>
               <th className="text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {activeProducts.map((p) => (
+            {pagedProducts.map((p) => (
               <tr
                 key={p._id}
                 className={
@@ -361,7 +241,7 @@ export default function ProductsPage() {
                   </span>
                 </td>
                 <td className="font-medium">{p.designation}</td>
-                <td className="text-sm text-slate-500">{getCategoryName(p)}</td>
+                <td>{typeof p.categoryId === 'object' ? p.categoryId.name : p.categoryId || '—'}</td>
                 <td className="font-semibold text-primary-600">
                   {formatCurrency(p.salePrice)}
                 </td>
@@ -397,24 +277,20 @@ export default function ProductsPage() {
             ))}
           </tbody>
         </table>
+        <Pagination current={page} totalPages={totalPages} onChange={(p) => setPage(p)} />
         {!activeProducts.length && (
           <EmptyState
             icon={<Package size={28} />}
             title="Aucun produit"
-            description={
-              activeTab === 'all'
-                ? "Ajoutez votre premier produit ou importez depuis Excel"
-                : "Aucun produit dans cette catégorie"
-            }
+            description="Ajoutez votre premier produit ou importez depuis Excel"
             action={
-              <Button onClick={() => openCreate(activeTab !== 'all' ? activeTab : undefined)}>
+              <Button onClick={() => openCreate()}>
                 <Plus size={16} />
                 Ajouter un produit
               </Button>
             }
           />
         )}
-      </div>
 
       <Modal
         isOpen={modalOpen}
@@ -423,24 +299,17 @@ export default function ProductsPage() {
         size="lg"
       >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4">
-          {/* Référence — auto-générée et en lecture seule */}
-          {/* <div className="mb-3">
-            <label className="label">Référence</label>
-            <div className="input bg-slate-50 dark:bg-slate-800 text-slate-500 flex items-center gap-2 cursor-not-allowed">
-              <Hash size={14} className="text-slate-400" />
-              <span className="text-sm">{referencePreview}</span>
-            </div>
-            {!editing && form.categoryId && (
-              <p className="text-xs text-primary-500 mt-1">
-                Référence générée automatiquement à la création
-              </p>
-            )}
-          </div> */}
 
           <Input
             label="Désignation *"
             value={form.designation}
             onChange={(e) => setForm({ ...form, designation: e.target.value })}
+          />
+          <Input
+            label="Référence (facultatif)"
+            value={form.reference}
+            onChange={(e) => setForm({ ...form, reference: e.target.value })}
+            disabled={!!editing}
           />
           <Input
             label="Code-barres"
@@ -461,6 +330,7 @@ export default function ProductsPage() {
             label="Prix achat"
             type="number"
             step="0.001"
+            className="input-number"
             value={form.purchasePrice}
             onChange={(e) => setForm({ ...form, purchasePrice: +e.target.value })}
           />
@@ -468,11 +338,12 @@ export default function ProductsPage() {
             label="Marge bénéficiaire %"
             type="number"
             step="0.1"
+            className="input-number"
             value={form.profitMargin}
             onChange={(e) => setForm({ ...form, profitMargin: +e.target.value })}
           />
           <div className="mb-3">
-            <label className="label">Prix de vente (calculé)</label>
+            <label className="label">Prix HT (calculé)</label>
             <div className="input bg-slate-50 dark:bg-slate-800 text-slate-500 cursor-not-allowed">
               {formatCurrency(
                 form.purchasePrice > 0 && form.profitMargin > 0
@@ -485,49 +356,10 @@ export default function ProductsPage() {
             label="Remise par défaut %"
             type="number"
             step="0.1"
+            className="input-number"
             value={form.discount}
             onChange={(e) => setForm({ ...form, discount: +e.target.value })}
           />
-          <Input
-            label="TVA %"
-            type="number"
-            value={form.tva}
-            onChange={(e) => setForm({ ...form, tva: +e.target.value })}
-          />
-          <label className="flex items-center gap-2 cursor-pointer select-none mb-3">
-            <input
-              type="checkbox"
-              checked={form.subjectToFodec}
-              onChange={(e) => setForm({ ...form, subjectToFodec: e.target.checked })}
-              className="w-4 h-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500"
-            />
-            <span className="text-sm text-slate-600 dark:text-slate-400">
-              Soumis au FODEC (1% sur HT)
-            </span>
-          </label>
-          <div className="mb-3">
-            <label className="label">Fournisseur</label>
-            <div className="flex gap-2">
-              <div className="flex-1">
-                <Select
-                  value={form.supplierId}
-                  onChange={(e) => setForm({ ...form, supplierId: e.target.value })}
-                  options={[
-                    { value: '', label: '-- Aucun --' },
-                    ...(suppliers?.data?.map((s) => ({ value: s._id, label: s.companyName })) || [])
-                  ]}
-                />
-              </div>
-              <button
-                type="button"
-                onClick={() => setSupplierCreateOpen(true)}
-                className="btn-secondary px-3 shrink-0 self-end mb-0.5"
-                title="Nouveau fournisseur"
-              >
-                <UserPlus size={18} />
-              </button>
-            </div>
-          </div>
           <Select
             label="Unité"
             value={form.unit}
@@ -535,41 +367,18 @@ export default function ProductsPage() {
             options={UNITS.map((u) => ({ value: u, label: u }))}
           />
           <Input
-            label="Stock"
+            label="Quantité"
             type="number"
+            className="input-number"
             value={form.stock}
             onChange={(e) => setForm({ ...form, stock: +e.target.value })}
           />
           <Input
-            label="Stock minimum"
+            label="Quantité minimum"
             type="number"
+            className="input-number"
             value={form.minStock}
             onChange={(e) => setForm({ ...form, minStock: +e.target.value })}
-          />
-
-          {/* Catégorie — requise pour générer la référence */}
-          <Select
-            label="Catégorie *"
-            value={form.categoryId}
-            onChange={(e) =>
-              setForm({ ...form, categoryId: e.target.value, subCategoryId: '' })
-            }
-            options={[
-              { value: '', label: '-- Sélectionnez une catégorie --' },
-              ...(categories?.map((c) => ({
-                value: c._id,
-                label: `${c.name} (${c.prefix})`
-              })) || [])
-            ]}
-          />
-          <Select
-            label="Sous-catégorie"
-            value={form.subCategoryId}
-            onChange={(e) => setForm({ ...form, subCategoryId: e.target.value })}
-            options={[
-              { value: '', label: '--' },
-              ...(subcategories?.map((s) => ({ value: s._id, label: s.name })) || [])
-            ]}
           />
         </div>
         <div className="flex justify-end gap-2 mt-4">
@@ -579,18 +388,13 @@ export default function ProductsPage() {
           <Button
             loading={saveMutation.isPending}
             onClick={() => saveMutation.mutate(form)}
-            disabled={!form.categoryId}
+            disabled={!form.designation.trim()}
           >
             {editing ? 'Modifier' : 'Créer'}
           </Button>
         </div>
       </Modal>
 
-      <SupplierQuickCreateModal
-        isOpen={supplierCreateOpen}
-        onClose={() => setSupplierCreateOpen(false)}
-        onCreated={(supplier) => setForm((f) => ({ ...f, supplierId: supplier._id }))}
-      />
 
       <ConfirmDialog
         isOpen={!!deleteId}

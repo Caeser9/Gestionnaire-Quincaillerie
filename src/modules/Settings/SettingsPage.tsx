@@ -1,10 +1,12 @@
 import { Button } from '@renderer/components/ui/Button'
 import { Input } from '@renderer/components/ui/Input'
+import { PageHeader } from '@renderer/components/ui/PageHeader'
+import { Select } from '@renderer/components/ui/Select'
 import { useLicense } from '@renderer/contexts/LicenseContext'
 import { DEFAULT_MONGO_URI } from '@shared/constants'
 import { apiRequest } from '@renderer/lib/api'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { KeyRound, RefreshCw } from 'lucide-react'
+import { KeyRound, Store, Wrench, ShoppingCart, Building2, Factory, Briefcase } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
 
@@ -12,24 +14,43 @@ interface Settings {
   companyName: string
   companyAddress?: string
   companyPhone?: string
+  companyFax?: string
+  companyMatriculeFiscal?: string
+  companyTvaCode?: string
+  companyRC?: string
   defaultTva: number
   currency: string
-  invoiceFormat: string
   mongoUri?: string
+  storeName?: string
+  storeIcon?: string
 }
 
 export default function SettingsPage() {
   const queryClient = useQueryClient()
-  const { status, authorizedModules, refresh } = useLicense()
+  const { status, authorizedModules } = useLicense()
   const [machineId, setMachineId] = useState('')
   const [form, setForm] = useState({
     companyName: '',
     companyAddress: '',
     companyPhone: '',
+    companyFax: '',
+    companyMatriculeFiscal: '',
+    companyTvaCode: '',
+    companyRC: '',
     defaultTva: 19,
     currency: 'DT',
-    invoiceFormat: 'FAC-{year}-{number}'
+    storeName: '',
+    storeIcon: 'store'
   })
+
+  const storeIcons = [
+    { value: 'store', label: 'Boutique', icon: Store },
+    { value: 'wrench', label: 'Quincaillerie', icon: Wrench },
+    { value: 'shopping', label: 'Supermarché', icon: ShoppingCart },
+    { value: 'building', label: 'Commerce', icon: Building2 },
+    { value: 'factory', label: 'Usine', icon: Factory },
+    { value: 'briefcase', label: 'Bureau', icon: Briefcase }
+  ]
 
   const { data: settings } = useQuery({
     queryKey: ['settings'],
@@ -42,9 +63,14 @@ export default function SettingsPage() {
         companyName: settings.companyName,
         companyAddress: settings.companyAddress || '',
         companyPhone: settings.companyPhone || '',
+        companyFax: settings.companyFax || '',
+        companyMatriculeFiscal: settings.companyMatriculeFiscal || '',
+        companyTvaCode: settings.companyTvaCode || '',
+        companyRC: settings.companyRC || '',
         defaultTva: settings.defaultTva,
         currency: settings.currency,
-        invoiceFormat: settings.invoiceFormat
+        storeName: settings.storeName || '',
+        storeIcon: settings.storeIcon || 'store'
       })
     }
   }, [settings])
@@ -69,25 +95,51 @@ export default function SettingsPage() {
     onError: (err: Error) => toast.error(err.message)
   })
 
-  const verifyLicenseNow = async () => {
-    try {
-      if (window.electronAPI?.verifyLicense) {
-        await window.electronAPI.verifyLicense()
-      }
-      await refresh()
-      toast.success('Licence verifiee')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Erreur de verification licence')
-    }
-  }
-
   return (
     <div className="space-y-8 max-w-2xl">
-      <h1 className="page-title">Paramètres</h1>
-      <p className="page-subtitle">Configuration de la société</p>
+      <PageHeader title="Paramètres" subtitle="Configuration de la société" back />
 
       <section className="card p-6 space-y-3">
+        <h2 className="text-lg font-semibold mb-2 flex items-center gap-2">
+          <Store size={18} />
+          Personnalisation boutique
+        </h2>
+        <p className="text-sm text-slate-500 mb-3">
+          Personnalisez le nom et l'icône de votre application.
+        </p>
+        
+        <div>
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Icône de la boutique</label>
+          <div className="grid grid-cols-3 gap-3">
+            {storeIcons.map((icon) => {
+              const IconComponent = icon.icon
+              return (
+                <button
+                  key={icon.value}
+                  type="button"
+                  onClick={() => setForm({ ...form, storeIcon: icon.value })}
+                  className={`flex flex-col items-center gap-2 p-3 rounded-lg border-2 transition-all ${
+                    form.storeIcon === icon.value
+                      ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
+                      : 'border-slate-200 hover:border-slate-300 dark:border-slate-700 dark:hover:border-slate-600'
+                  }`}
+                >
+                  <IconComponent size={24} className={form.storeIcon === icon.value ? 'text-primary-600' : 'text-slate-400'} />
+                  <span className="text-xs font-medium">{icon.label}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+        <Button loading={saveMutation.isPending} onClick={() => saveMutation.mutate(form)}>
+          Enregistrer
+        </Button>
+      </section>
+      <section className="card p-6 space-y-3">
         <h2 className="text-lg font-semibold mb-2">Informations société</h2>
+        <p className="text-sm text-slate-500 mb-3">
+          Ces informations apparaissent sur les factures, bons de livraison et devis (bloc vendeur).
+        </p>
         <Input
           label="Nom société"
           value={form.companyName}
@@ -104,8 +156,14 @@ export default function SettingsPage() {
           onChange={(e) => setForm({ ...form, companyPhone: e.target.value })}
         />
         <Input
-          label="TVA par défaut %"
+          label="Fax"
+          value={form.companyFax}
+          onChange={(e) => setForm({ ...form, companyFax: e.target.value })}
+        />        
+        <Input
+          label="TVA %"
           type="number"
+          disabled 
           value={form.defaultTva}
           onChange={(e) => {
             const tva = Number(e.target.value)
@@ -113,15 +171,62 @@ export default function SettingsPage() {
           }}
         />
         <Input
+          label="Registre de commerce"
+          value={form.companyRC}
+          onChange={(e) => setForm({ ...form, companyRC: e.target.value })}
+        />
+        <Input
+          label="Code TVA"
+          value={form.companyTvaCode}
+          onChange={(e) => setForm({ ...form, companyTvaCode: e.target.value })}
+        />
+        <Input
           label="Devise"
           value={form.currency}
           onChange={(e) => setForm({ ...form, currency: e.target.value })}
         />
+        <Button loading={saveMutation.isPending} onClick={() => saveMutation.mutate(form)}>
+          Enregistrer
+        </Button>
+      </section>
+
+      <section className="card p-6 space-y-3">
+        <h2 className="text-lg font-semibold mb-2 flex items-center gap-2">
+          <Store size={18} />
+          Personnalisation boutique
+        </h2>
+        <p className="text-sm text-slate-500 mb-3">
+          Personnalisez le nom et l'icône de votre application.
+        </p>
         <Input
-          label="Format facture"
-          value={form.invoiceFormat}
-          onChange={(e) => setForm({ ...form, invoiceFormat: e.target.value })}
+          label="Nom de la boutique"
+          value={form.storeName}
+          onChange={(e) => setForm({ ...form, storeName: e.target.value })}
+          placeholder="Ex: Ma Boutique"
         />
+        <div>
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Icône de la boutique</label>
+          <div className="grid grid-cols-3 gap-3">
+            {storeIcons.map((icon) => {
+              const IconComponent = icon.icon
+              return (
+                <button
+                  key={icon.value}
+                  type="button"
+                  onClick={() => setForm({ ...form, storeIcon: icon.value })}
+                  className={`flex flex-col items-center gap-2 p-3 rounded-lg border-2 transition-all ${
+                    form.storeIcon === icon.value
+                      ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
+                      : 'border-slate-200 hover:border-slate-300 dark:border-slate-700 dark:hover:border-slate-600'
+                  }`}
+                >
+                  <IconComponent size={24} className={form.storeIcon === icon.value ? 'text-primary-600' : 'text-slate-400'} />
+                  <span className="text-xs font-medium">{icon.label}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
         <Button loading={saveMutation.isPending} onClick={() => saveMutation.mutate(form)}>
           Enregistrer
         </Button>
@@ -175,12 +280,6 @@ export default function SettingsPage() {
         {machineId && (
           <p className="text-xs text-slate-400 font-mono break-all">Machine ID : {machineId}</p>
         )}
-        <div className="flex gap-2 pt-2">
-          <Button variant="secondary" onClick={verifyLicenseNow}>
-            <RefreshCw size={16} />
-            Vérifier la licence
-          </Button>
-        </div>
       </section>
     </div>
   )

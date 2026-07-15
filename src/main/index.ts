@@ -7,6 +7,7 @@ import { Settings } from './db/models'
 import { startServer, getServerPort } from './server'
 import { startDemoServer } from './server/demo'
 import { isDemoMode } from './demoMode'
+import { startMongoDB, stopMongoDB, getMongoDBUri } from './services/mongodb.service'
 import {
   activateLicense,
   getAuthorizedModules,
@@ -20,6 +21,16 @@ import {
 
 let mainWindow: BrowserWindow | null = null
 
+// Allow overriding userData path via env for debugging (useful when profile is corrupt)
+const _udOverride = process.env.ELECTRON_USER_DATA || process.env.ELECTRON_USERDATA
+if (_udOverride) {
+  try {
+    app.setPath('userData', _udOverride)
+    console.log('[APP] userData overridden to:', app.getPath('userData'))
+  } catch (err) {
+    console.error('[APP] Failed to set userData override:', err)
+  }
+}
 async function initApp(): Promise<void> {
   if (isDemoMode()) {
     console.log('[DEMO] Starting JSON demo mode')
@@ -27,7 +38,14 @@ async function initApp(): Promise<void> {
     return
   }
 
-  let mongoUri = DEFAULT_MONGO_URI
+  // Démarrer MongoDB automatiquement
+  const mongoStarted = await startMongoDB()
+  if (!mongoStarted) {
+    console.error('[APP] Failed to start MongoDB')
+    return
+  }
+
+  let mongoUri = getMongoDBUri()
 
   try {
     await connectDatabase(mongoUri)
@@ -44,7 +62,29 @@ async function initApp(): Promise<void> {
   await startServer(DEFAULT_PORT)
 }
 
-function createWindow(): void {
+async function getAppTitle(): Promise<string> {
+  if (isDemoMode()) {
+    return 'Gestionnaire Quincaillerie (Demo)'
+  }
+  
+  try {
+    const settings = await Settings.findOne().exec()
+    if (settings?.storeName) {
+      return settings.storeName
+    }
+    if (settings?.companyName) {
+      return settings.companyName
+    }
+  } catch (err) {
+    console.error('[APP] Failed to load settings for title:', err)
+  }
+  
+  return 'Gestionnaire Quincaillerie'
+}
+
+async function createWindow(): Promise<void> {
+  const title = await getAppTitle()
+  
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -52,7 +92,7 @@ function createWindow(): void {
     minHeight: 700,
     show: false,
     autoHideMenuBar: true,
-    title: 'Gestionnaire Quincaillerie',
+    title,
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -96,13 +136,34 @@ function registerIpcHandlers(): void {
   ipcMain.handle('print:a4', async (_event, pdfBase64: string) => {
     if (!mainWindow) return { success: false, error: 'Fenêtre non disponible' }
     try {
-      const pdfWindow = new BrowserWindow({ show: false })
+      const pdfWindow = new BrowserWindow({ 
+        show: true,
+        width: 800,
+        height: 600,
+        title: 'Aperçu avant impression',
+        autoHideMenuBar: true,
+        webPreferences: {
+          nodeIntegration: false,
+          contextIsolation: true
+        }
+      })
+      
       const dataUrl = `data:application/pdf;base64,${pdfBase64}`
       await pdfWindow.loadURL(dataUrl)
-      await pdfWindow.webContents.print({ silent: false, printBackground: true })
-      pdfWindow.close()
+      
+      pdfWindow.webContents.on('did-finish-load', () => {
+        setTimeout(() => {
+          pdfWindow.webContents.print({ silent: false, printBackground: true })
+        }, 500)
+      })
+      
+      pdfWindow.on('closed', () => {
+        pdfWindow.destroy()
+      })
+      
       return { success: true }
     } catch (err) {
+      console.error('[Print] A4 print error:', err)
       return { success: false, error: String(err) }
     }
   })
@@ -138,6 +199,7 @@ function registerIpcHandlers(): void {
 }
 
 app.whenReady().then(async () => {
+  console.log('[APP] userData path:', app.getPath('userData'))
   await initApp()
   registerIpcHandlers()
   createWindow()

@@ -36,7 +36,7 @@ function pathFromUrl(url: string): string {
 interface ApiJson {
   success: boolean
   data?: unknown
-  error?: { message?: string }
+  error?: { message?: string; errors?: Record<string, string[]> }
 }
 
 export async function apiRequest<T = unknown>(
@@ -64,7 +64,13 @@ export async function apiRequest<T = unknown>(
   }
 
   if (!response.ok || !json.success) {
-    const msg = json.error?.message || `Erreur serveur (${response.status})`
+    const fieldErrors = json.error?.errors
+      ? Object.values(json.error.errors).flat().filter(Boolean)
+      : []
+    const msg =
+      fieldErrors.length > 0
+        ? fieldErrors.join(' · ')
+        : json.error?.message || `Erreur serveur (${response.status})`
     if (msg.startsWith('Route introuvable')) {
       throw new Error(`${msg} : ${pathFromUrl(url)}`)
     }

@@ -70,6 +70,14 @@
       transition-colors;
   }
 
+  .input-number {
+    @apply input text-right font-mono text-lg tracking-wide tabular-nums py-3;
+  }
+
+  .input-number-sm {
+    @apply input-number text-base py-2.5;
+  }
+
   .input-lg {
     @apply input py-3.5 text-base;
   }

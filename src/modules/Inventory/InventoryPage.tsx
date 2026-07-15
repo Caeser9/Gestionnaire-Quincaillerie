@@ -4,11 +4,12 @@ import { Modal } from '@renderer/components/ui/Modal'
 import { PageHeader } from '@renderer/components/ui/PageHeader'
 import { StatCard } from '@renderer/components/ui/StatCard'
 import { apiRequest } from '@renderer/lib/api'
-import { formatCurrency, formatDateTime } from '@renderer/lib/format'
+import { formatDateTime } from '@renderer/lib/format'
 import type { PaginatedResult } from '@shared/types'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, ClipboardList, Package } from 'lucide-react'
 import { useState } from 'react'
+import Pagination from '@renderer/components/ui/Pagination'
 import toast from 'react-hot-toast'
 
 interface Product {
@@ -16,12 +17,14 @@ interface Product {
   designation: string
   stock: number
   minStock: number
+  purchasePrice?: number
+  supplierId?: string | { _id?: string }
 }
 
 interface Valuation {
   totalProducts: number
-  purchaseValue: number
-  saleValue: number
+  currentStock: number
+  restockCount: number
   lowStockProducts: Product[]
 }
 
@@ -49,6 +52,11 @@ export default function InventoryPage() {
   const [newStock, setNewStock] = useState(0)
   const [inventoryOpen, setInventoryOpen] = useState(false)
   const [inventoryLines, setInventoryLines] = useState<InventoryLine[]>([])
+  const [supplierModalOpen, setSupplierModalOpen] = useState(false)
+  const [supplierModalProduct, setSupplierModalProduct] = useState<Product | null>(null)
+  const [selectedSupplierId, setSelectedSupplierId] = useState('')
+  const [requiredQuantity, setRequiredQuantity] = useState(1)
+  const [unitPrice, setUnitPrice] = useState(0)
 
   const { data: valuation } = useQuery({
     queryKey: ['stock-valuation'],
@@ -66,6 +74,10 @@ export default function InventoryPage() {
     queryFn: () => apiRequest<PaginatedResult<Product>>('/products?limit=500'),
     enabled: inventoryOpen
   })
+  const { data: suppliers } = useQuery({
+    queryKey: ['suppliers'],
+    queryFn: () => apiRequest<PaginatedResult<{ _id: string; companyName: string }>>('/suppliers?limit=200')
+  })
 
   const adjustMutation = useMutation({
     mutationFn: (data: { productId: string; quantity: number }) =>
@@ -75,6 +87,28 @@ export default function InventoryPage() {
       queryClient.invalidateQueries({ queryKey: ['stock-movements'] })
       toast.success('Stock ajusté')
       setAdjustProduct(null)
+    },
+    onError: (err: Error) => toast.error(err.message)
+  })
+
+  const createPurchaseOrderMutation = useMutation({
+    mutationFn: (data: {
+      supplierId: string
+      lines: { productId: string; designation: string; quantity: number; unitPrice: number }[]
+      notes?: string
+    }) =>
+      apiRequest('/purchase-orders', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['purchase-orders'] })
+      toast.success('Bon de commande créé')
+      setSupplierModalOpen(false)
+      setSupplierModalProduct(null)
+      setSelectedSupplierId('')
+      setRequiredQuantity(1)
+      setUnitPrice(0)
     },
     onError: (err: Error) => toast.error(err.message)
   })
@@ -105,11 +139,17 @@ export default function InventoryPage() {
     setInventoryOpen(true)
   }
 
+  const [lowStockPage, setLowStockPage] = useState(1)
+  const [movementsPage, setMovementsPage] = useState(1)
+  const PAGE_SIZE = 10
+  const PAGE_SIZE_PAA=3
+
   return (
     <div className="space-y-6">
       <PageHeader
+        back
         title="Gestion du stock"
-        subtitle="Suivi des mouvements, inventaires et valorisation"
+        subtitle="Stock actuel, produits à alimenter et mouvements"
         actions={
           <Button onClick={startInventory}>
             <ClipboardList size={16} />
@@ -118,23 +158,19 @@ export default function InventoryPage() {
         }
       />
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
         <StatCard
-          title="Produits"
-          value={valuation?.totalProducts ?? 0}
+          title="Stock actuel"
+          value={valuation?.currentStock ?? 0}
           icon={<Package size={24} />}
+          subtitle="Quantité totale en magasin"
         />
         <StatCard
-          title="Valeur achat"
-          value={formatCurrency(valuation?.purchaseValue ?? 0)}
-          icon={<Package size={24} />}
-          color="blue"
-        />
-        <StatCard
-          title="Valeur vente"
-          value={formatCurrency(valuation?.saleValue ?? 0)}
-          icon={<Package size={24} />}
-          color="green"
+          title="Produits à alimenter"
+          value={valuation?.restockCount ?? 0}
+          icon={<AlertTriangle size={24} />}
+          color="amber"
+          subtitle="Sous le stock minimum"
         />
       </div>
 
@@ -142,39 +178,56 @@ export default function InventoryPage() {
         <div className="card p-4">
           <h2 className="font-semibold flex items-center gap-2 mb-3">
             <AlertTriangle className="text-yellow-500" size={20} />
-            Alertes stock minimum
+            Liste des produits à alimenter
           </h2>
           <div className="table-container">
             <table className="table">
               <thead>
                 <tr>
                   <th>Produit</th>
-                  <th>Stock</th>
-                  <th>Minimum</th>
+                  <th>Stock actuel</th>
+                  <th>Stock minimum</th>
+                  <th>Qté à commander</th>
                   <th>Action</th>
                 </tr>
               </thead>
               <tbody>
-                {valuation.lowStockProducts.map((p) => (
-                  <tr key={p._id}>
-                    <td>{p.designation}</td>
-                    <td className="text-red-600 font-semibold">{p.stock}</td>
-                    <td>{p.minStock}</td>
-                    <td>
-                      <Button
-                        variant="secondary"
-                        onClick={() => {
-                          setAdjustProduct(p)
-                          setNewStock(p.stock)
-                        }}
-                      >
-                        Ajuster
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
+                {(valuation.lowStockProducts ?? [])
+                  .slice((lowStockPage - 1) * PAGE_SIZE_PAA, lowStockPage * PAGE_SIZE_PAA)
+                  .map((p) => (
+                    <tr key={p._id}>
+                      <td>{p.designation}</td>
+                      <td className="text-red-600 font-semibold">{p.stock}</td>
+                      <td>{p.minStock}</td>
+                      <td className="font-semibold">{Math.max(1, p.minStock - p.stock)}</td>
+                      <td>
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            const supplierId =
+                              typeof p.supplierId === 'string'
+                                ? p.supplierId
+                                : p.supplierId?._id
+
+                            setSupplierModalProduct(p)
+                            setSelectedSupplierId(supplierId ?? '')
+                            setRequiredQuantity(Math.max(1, p.minStock - p.stock))
+                            setUnitPrice(p.purchasePrice ?? 0)
+                            setSupplierModalOpen(true)
+                          }}
+                        >
+                          Commander
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
               </tbody>
             </table>
+            <Pagination
+              current={lowStockPage}
+              totalPages={Math.max(1, Math.ceil((valuation?.lowStockProducts?.length ?? 0) / PAGE_SIZE_PAA))}
+              onChange={(p) => setLowStockPage(p)}
+            />
           </div>
         </div>
       )}
@@ -194,30 +247,149 @@ export default function InventoryPage() {
               </tr>
             </thead>
             <tbody>
-              {movements?.data?.map((m) => (
-                <tr key={m._id}>
-                  <td className="text-xs">{formatDateTime(m.createdAt)}</td>
-                  <td>
-                    {typeof m.productId === 'object'
-                      ? m.productId?.designation
-                      : m.productId}
-                  </td>
-                  <td>
-                    <span className={m.type === 'in' ? 'badge-success' : 'badge-danger'}>
-                      {m.type === 'in' ? 'Entrée' : 'Sortie'}
-                    </span>
-                  </td>
-                  <td>{m.reason}</td>
-                  <td>{m.quantity}</td>
-                  <td>
-                    {m.stockBefore} → {m.stockAfter}
-                  </td>
-                </tr>
-              ))}
+              {(movements?.data ?? [])
+                .slice((movementsPage - 1) * PAGE_SIZE, movementsPage * PAGE_SIZE)
+                .map((m) => (
+                  <tr key={m._id}>
+                    <td className="text-xs">{formatDateTime(m.createdAt)}</td>
+                    <td>
+                      {typeof m.productId === 'object'
+                        ? m.productId?.designation
+                        : m.productId}
+                    </td>
+                    <td>
+                      <span className={m.type === 'in' ? 'badge-success' : 'badge-danger'}>
+                        {m.type === 'in' ? 'Entrée' : 'Sortie'}
+                      </span>
+                    </td>
+                    <td>{m.reason}</td>
+                    <td>{m.quantity}</td>
+                    <td>
+                      {m.stockAfter}
+                    </td>
+                  </tr>
+                ))}
             </tbody>
           </table>
+          <Pagination
+            current={movementsPage}
+            totalPages={Math.max(1, Math.ceil((movements?.total ?? movements?.data?.length ?? 0) / PAGE_SIZE))}
+            onChange={(p) => setMovementsPage(p)}
+          />
         </div>
       </div>
+
+      <Modal
+        isOpen={supplierModalOpen}
+        onClose={() => {
+          setSupplierModalOpen(false)
+          setSupplierModalProduct(null)
+          setSelectedSupplierId('')
+          setRequiredQuantity(1)
+          setUnitPrice(0)
+        }}
+        title="Choisir un fournisseur"
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
+            <p className="text-sm font-medium">Produit concerné</p>
+            <p className="text-sm text-slate-600 dark:text-slate-300">{supplierModalProduct?.designation}</p>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium">Quantité à commander</label>
+            <Input
+              label=""
+              type="number"
+              min="1"
+              className="input-number"
+              value={requiredQuantity}
+              onChange={(e) => setRequiredQuantity(Math.max(1, Number(e.target.value) || 1))}
+            />
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium">Prix unitaire</label>
+            <Input
+              label=""
+              type="number"
+              min="0"
+              step="0.01"
+              className="input-number"
+              value={unitPrice}
+              onChange={(e) => setUnitPrice(Number(e.target.value) || 0)}
+            />
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium">Fournisseur</label>
+            <select
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 dark:border-slate-600 dark:bg-slate-900"
+              value={selectedSupplierId}
+              onChange={(e) => setSelectedSupplierId(e.target.value)}
+            >
+              <option value="">Sélectionner un fournisseur</option>
+              {(suppliers?.data ?? []).map((s: { _id: string; companyName: string }) => (
+                <option key={s._id} value={s._id}>
+                  {s.companyName}
+                </option>
+              ))}
+            </select>
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+              Choisissez le fournisseur qui livrera ce produit.
+            </p>
+          </div>
+
+          {!(suppliers?.data?.length ?? 0) && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+              Aucun fournisseur n’est disponible pour l’instant.
+            </div>
+          )}
+        </div>
+
+        <div className="mt-4 flex justify-end gap-2">
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setSupplierModalOpen(false)
+              setSupplierModalProduct(null)
+              setSelectedSupplierId('')
+              setRequiredQuantity(1)
+              setUnitPrice(0)
+            }}
+          >
+            Annuler
+          </Button>
+          <Button
+            onClick={() => {
+              if (!selectedSupplierId) {
+                toast.error('Sélectionnez un fournisseur')
+                return
+              }
+              if (!supplierModalProduct) return
+
+            createPurchaseOrderMutation.mutate({
+              supplierId: selectedSupplierId,
+              lines: [
+                {
+                  productId: supplierModalProduct._id,
+                  designation: supplierModalProduct.designation,
+                  quantity: requiredQuantity,
+                  unitPrice: unitPrice
+                }
+              ]
+            })
+
+            setSupplierModalOpen(false)
+            setSupplierModalProduct(null)
+            setSelectedSupplierId('')
+            setRequiredQuantity(1)
+            }}
+          >
+            Créer bon
+          </Button>
+        </div>
+      </Modal>
 
       <Modal
         isOpen={!!adjustProduct}
@@ -228,6 +400,7 @@ export default function InventoryPage() {
         <Input
           label="Nouveau stock"
           type="number"
+          className="input-number"
           value={newStock}
           onChange={(e) => setNewStock(+e.target.value)}
         />

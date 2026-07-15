@@ -62,7 +62,11 @@ router.post('/customers/quick', asyncHandler(async (req, res) => {
     return
   }
 
-  const result = await findOrCreateCustomerByName(name)
+  const result = await findOrCreateCustomerByName(name, {
+    phone: String(req.body?.phone ?? '').trim() || undefined,
+    address: String(req.body?.address ?? '').trim() || undefined,
+    matricule: String(req.body?.matricule ?? '').trim() || undefined
+  })
   if (!result) {
     sendError(res, 'Nom du client requis', 400)
     return

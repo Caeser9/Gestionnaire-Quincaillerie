@@ -9,6 +9,8 @@ export const REFERENCE_PREFIXES = {
   invoice: 'FAC',
   purchaseOrder: 'BC',
   purchaseSlip: 'BA',
+  deliveryNote: 'BL',
+  quote: 'DEV',
   inventory: 'INV'
 } as const
 
@@ -22,12 +24,8 @@ export const DEFAULT_SETTINGS = {
   companyPhone: '',
   defaultTva: 19,
   currency: 'DT',
-  invoiceFormat: 'FAC-{year}-{number}',
   mongoUri: DEFAULT_MONGO_URI
 }
-
-/** FODEC — 1 % sur le HT des produits éligibles (Tunisie) */
-export const FODEC_RATE = 1
 
 /** Timbre fiscal — montant fixe sur facture (Tunisie) */
 export const TIMBRE_FISCAL_AMOUNT = 1

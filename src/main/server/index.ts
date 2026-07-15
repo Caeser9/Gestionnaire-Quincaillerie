@@ -11,6 +11,8 @@ import inventoryRoutes from './routes/inventory.routes'
 import reportsRoutes from './routes/reports.routes'
 import settingsRoutes from './routes/settings.routes'
 import financeRoutes from './routes/finance.routes'
+import deliveryNotesRoutes from './routes/delivery-notes.routes'
+import quotesRoutes from './routes/quotes.routes'
 
 let serverPort = DEFAULT_PORT
 
@@ -38,6 +40,8 @@ export function createApp(): Express {
   app.use('/api', reportsRoutes)
   app.use('/api', settingsRoutes)
   app.use('/api', financeRoutes)
+  app.use('/api', deliveryNotesRoutes)
+  app.use('/api', quotesRoutes)
 
   app.use((req: Request, res: Response) => {
     console.warn(`[API 404] ${req.method} ${req.originalUrl}`)

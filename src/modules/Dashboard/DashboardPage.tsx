@@ -3,14 +3,26 @@ import { StatCard } from '@renderer/components/ui/StatCard'
 import { apiRequest } from '@renderer/lib/api'
 import { formatCurrency, formatDate } from '@renderer/lib/format'
 import { useQuery } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
 import {
   AlertTriangle,
+  Boxes,
   DollarSign,
   FileText,
   Package,
+  PanelRight,
   ShoppingBag,
-  TrendingUp
+  Sparkles,
+  TrendingUp,
+  Truck,
+  Users,
+  Warehouse,
+  ClipboardList
 } from 'lucide-react'
+import { getDashboardShortcutItems } from './dashboardQuickActions'
+import { resolveDashboardMode, type DashboardMode } from './dashboardMode'
+import { useMemo } from 'react'
+import { useLicense } from '@renderer/contexts/LicenseContext'
 import {
   Bar,
   BarChart,
@@ -36,6 +48,9 @@ interface DashboardData {
 }
 
 export default function DashboardPage() {
+  const navigate = useNavigate()
+  const { dashboardMode: licenseDashboardMode } = useLicense()
+  const mode = useMemo<DashboardMode>(() => resolveDashboardMode(licenseDashboardMode), [licenseDashboardMode])
   const { data, isLoading } = useQuery({
     queryKey: ['dashboard'],
     queryFn: () => apiRequest<DashboardData>('/dashboard')
@@ -56,46 +71,120 @@ export default function DashboardPage() {
     month: 'long'
   })
 
+  const shortcuts = getDashboardShortcutItems()
+
+  if (mode === 'simple') {
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          title="Tableau de bord simple"
+          subtitle="Accès rapide aux modules principaux"
+        />
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {shortcuts.map((shortcut) => {
+            const iconMap: Record<string, JSX.Element> = {
+              pos: <PanelRight size={20} />,
+              billing: <FileText size={20} />,
+              delivery: <Truck size={20} />,
+              quotes: <ClipboardList size={20} />,
+              products: <Boxes size={20} />,
+              customers: <Users size={20} />,
+              debts: <ShoppingBag size={20} />,
+              inventory: <Warehouse size={20} />,
+            }
+
+            return (
+              <button
+                key={shortcut.id}
+                type="button"
+                onClick={() => navigate(shortcut.path)}
+                className="rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary-300 hover:shadow-md dark:border-slate-800 dark:bg-slate-900"
+              >
+                <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-primary-50 text-primary-600 dark:bg-primary-900/20 dark:text-primary-300">
+                  {iconMap[shortcut.id]}
+                </div>
+                <p className="text-base font-semibold text-slate-800 dark:text-slate-200">{shortcut.label}</p>
+                <p className="mt-1 text-sm text-slate-500">{shortcut.description}</p>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Tableau de bord"
         subtitle={`Aperçu de votre activité — ${todayLabel}`}
+        actions={
+          <button type="button" onClick={() => navigate('/pos')} className="btn-primary btn-sm">
+            Facturation
+          </button>
+        }
       />
 
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {shortcuts.slice(0, 4).map((shortcut) => (
+          <button
+            key={shortcut.id}
+            type="button"
+            onClick={() => navigate(shortcut.path)}
+            className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition hover:border-primary-300 hover:shadow-md dark:border-slate-800 dark:bg-slate-900"
+          >
+            <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">{shortcut.label}</p>
+            <p className="text-xs text-slate-500">{shortcut.description}</p>
+          </button>
+        ))}
+      </div>
+
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        <StatCard
-          title="Chiffre d'affaires"
-          value={formatCurrency(data?.todayRevenue ?? 0)}
-          icon={<DollarSign size={22} />}
-          color="green"
-          subtitle="Aujourd'hui"
-        />
-        <StatCard
-          title="Ventes"
-          value={data?.todaySales ?? 0}
-          icon={<ShoppingBag size={22} />}
-          color="blue"
-          subtitle="Transactions du jour"
-        />
-        <StatCard
-          title="Bénéfice estimé"
-          value={formatCurrency(data?.todayProfit ?? 0)}
-          icon={<TrendingUp size={22} />}
-          color="purple"
-          subtitle="Marge brute"
-        />
-        <StatCard
-          title="Factures"
-          value={data?.todayInvoices ?? 0}
-          icon={<FileText size={22} />}
-          color="amber"
-          subtitle="Émises aujourd'hui"
-        />
+        <button type="button" onClick={() => navigate('/pos')} className="text-left">
+          <StatCard
+            title="Chiffre d'affaires"
+            value={formatCurrency(data?.todayRevenue ?? 0)}
+            icon={<DollarSign size={22} />}
+            color="green"
+            subtitle="Aujourd'hui — cliquer pour vendre"
+          />
+        </button>
+        <button type="button" onClick={() => navigate('/pos')} className="text-left">
+          <StatCard
+            title="Ventes"
+            value={data?.todaySales ?? 0}
+            icon={<ShoppingBag size={22} />}
+            color="blue"
+            subtitle="Transactions du jour"
+          />
+        </button>
+        <button type="button" onClick={() => navigate('/finance')} className="text-left">
+          <StatCard
+            title="Bénéfice estimé"
+            value={formatCurrency(data?.todayProfit ?? 0)}
+            icon={<TrendingUp size={22} />}
+            color="purple"
+            subtitle="Marge brute"
+          />
+        </button>
+        <button type="button" onClick={() => navigate('/invoices?tab=invoices')} className="text-left">
+          <StatCard
+            title="Factures"
+            value={data?.todayInvoices ?? 0}
+            icon={<FileText size={22} />}
+            color="amber"
+            subtitle="Émises aujourd'hui"
+          />
+        </button>
       </div>
 
       {data && data.lowStockCount > 0 && (
-        <div className="flex items-center gap-4 p-4 rounded-2xl border border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-900/20">
+        <button
+          type="button"
+          onClick={() => navigate('/inventory')}
+          className="flex w-full items-center gap-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-left transition hover:border-amber-300 dark:border-amber-800/50 dark:bg-amber-900/20"
+        >
           <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-900/40 flex items-center justify-center shrink-0">
             <AlertTriangle className="text-amber-600" size={20} />
           </div>
@@ -105,7 +194,7 @@ export default function DashboardPage() {
               {data.lowStockCount} produit{data.lowStockCount > 1 ? 's' : ''} sous le seuil minimum
             </p>
           </div>
-        </div>
+        </button>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">

@@ -29,15 +29,21 @@ router.get('/stock/movements', asyncHandler(async (req, res) => {
 
 router.get('/stock/valuation', asyncHandler(async (_req, res) => {
   const products = await Product.find({ isDeleted: false })
-  const valuation = products.reduce((sum, p) => sum + p.stock * p.purchasePrice, 0)
-  const saleValue = products.reduce((sum, p) => sum + p.stock * p.salePrice, 0)
+  const currentStock = products.reduce((sum, p) => sum + p.stock, 0)
   const lowStock = products.filter((p) => p.stock <= p.minStock)
 
   sendSuccess(res, {
     totalProducts: products.length,
-    purchaseValue: Math.round(valuation * 1000) / 1000,
-    saleValue: Math.round(saleValue * 1000) / 1000,
-    lowStockProducts: lowStock
+    currentStock,
+    restockCount: lowStock.length,
+    lowStockProducts: lowStock.map((p) => ({
+      _id: p._id,
+      designation: p.designation,
+      stock: p.stock,
+      minStock: p.minStock,
+      purchasePrice: p.purchasePrice,
+      supplierId: p.supplierId
+    }))
   })
 }))
 
@@ -119,7 +125,7 @@ router.post('/inventory', asyncHandler(async (req, res) => {
         await StockMovement.create({
           productId: product._id,
           type: difference > 0 ? 'in' : 'out',
-          reason: 'inventory',
+          reason: 'inventaire',
           quantity: Math.abs(difference),
           stockBefore,
           stockAfter: product.stock,
