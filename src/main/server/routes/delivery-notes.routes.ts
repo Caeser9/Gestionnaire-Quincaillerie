@@ -22,6 +22,8 @@ async function enrichDeliveryNoteForPdf(doc: InstanceType<typeof PurchaseSlip>) 
     const customer = await Customer.findById(doc.customerId)
     if (customer) {
       data.customerCode = customer.reference
+      data.customerTvaCode = customer.tvaCode
+      data.customerMatricule = customer.matricule
     }
   }
   data.deliveryDriverName = doc.deliveryDriverName || doc.deliveryPerson
@@ -72,6 +74,8 @@ router.post('/delivery-notes/from-invoice/:invoiceId', asyncHandler(async (req, 
     customerId: invoice.customerId,
     customerName: invoice.customerName,
     customerAddress: invoice.customerAddress,
+    customerTvaCode: invoice.customerTvaCode,
+    customerMatricule: invoice.customerMatricule,
     lines: mapInvoiceLinesToDeliveryLines(invoice.lines || []),
     includeTva: invoice.includeTva,
     blNumber: invoice.blNumber || invoice.reference,
@@ -139,17 +143,29 @@ router.post('/delivery-notes/convert', asyncHandler(async (req, res) => {
     const primaryDelivery = deliveryDocs[0]
 
     const fromDeliveryNotes = deliveryDocs.flatMap((doc) =>
-      (doc.lines || []).map((line) => ({
-        productId: line.productId?.toString(),
-        reference: line.reference,
-        designation: line.designation || '',
-        quantity: line.quantity || 0,
-        unitPrice: line.unitPrice || 0,
-        discount: line.discount ?? 0,
-        tva: line.tva ?? 0,
-        totalHT: line.totalHT || 0,
-        totalTTC: line.totalTTC || 0
-      }))
+      (doc.lines || []).map((line) => {
+        const unitPrice = line.unitPrice || 0
+        const quantity = line.quantity || 0
+        const discount = line.discount ?? 0
+        const tvaRate = line.tva ?? 0
+        const htBeforeDiscount = unitPrice * quantity
+        const discountAmount = htBeforeDiscount * (discount / 100)
+        const totalHT = htBeforeDiscount - discountAmount
+        const tvaAmount = includeTva ? (totalHT * tvaRate / 100) : 0
+        const totalTTC = totalHT + tvaAmount
+
+        return {
+          productId: line.productId?.toString(),
+          reference: line.reference,
+          designation: line.designation || '',
+          quantity,
+          unitPrice,
+          discount,
+          tva: tvaRate,
+          totalHT,
+          totalTTC
+        }
+      })
     )
 
     mergedLines = [...mergedLines, ...fromDeliveryNotes]
@@ -170,11 +186,21 @@ router.post('/delivery-notes/convert', asyncHandler(async (req, res) => {
       ? await PurchaseSlip.findById(body.deliveryIds[0])
       : null
 
+  // Récupérer le code TVA du client si customerId existe
+  let customerTvaCode = undefined
+  if (customerId) {
+    const customer = await Customer.findById(customerId)
+    if (customer) {
+      customerTvaCode = customer.tvaCode
+    }
+  }
+
   const invoice = await Invoice.create({
     reference: invoiceRef,
     customerId: customerId || undefined,
     customerName: customerName || 'Client comptant',
     customerAddress: customerAddress || undefined,
+    customerTvaCode: customerTvaCode,
     lines: normalizedLines.map((line) => ({
       productId: line.productId,
       reference: line.reference,
@@ -228,6 +254,8 @@ router.post('/delivery-notes', asyncHandler(async (req, res) => {
   }
 
   let lines = body.lines as DeliveryNoteLine[]
+  let customerTvaCode = undefined
+  let customerMatricule = undefined
 
   if (body.sourceInvoiceId) {
     const invoice = await Invoice.findById(body.sourceInvoiceId)
@@ -240,6 +268,14 @@ router.post('/delivery-notes', asyncHandler(async (req, res) => {
         designation: line.designation || invoiceLines[index]?.designation || '',
         reference: line.reference || invoiceLines[index]?.reference || ''
       }))
+      customerTvaCode = invoice.customerTvaCode
+      customerMatricule = invoice.customerMatricule
+    }
+  } else if (body.customerId) {
+    const customer = await Customer.findById(body.customerId)
+    if (customer) {
+      customerTvaCode = customer.tvaCode
+      customerMatricule = customer.matricule
     }
   }
 
@@ -248,6 +284,8 @@ router.post('/delivery-notes', asyncHandler(async (req, res) => {
     customerId: body.customerId,
     customerName: body.customerName,
     customerAddress: body.customerAddress,
+    customerTvaCode,
+    customerMatricule,
     lines,
     includeTva: body.includeTva,
     deliveryDriverName: body.deliveryDriverName,

@@ -27,17 +27,30 @@ export function LicenseProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   const refresh = useCallback(async (forceOnline = false) => {
-    if (!window.electronAPI?.getLicenseStatus) {
-      setStatus({ status: 'active', authorizedModules: Object.values(ROUTE_MODULE_MAP).filter(Boolean) as string[] })
-      setLoading(false)
-      return
-    }
     setLoading(true)
     try {
-      const result =
-        forceOnline && window.electronAPI.verifyLicense
+      let result: LicenseStatusResponse | any = null
+
+      if (window.electronAPI?.getLicenseStatus) {
+        result = forceOnline && window.electronAPI.verifyLicense
           ? await window.electronAPI.verifyLicense()
           : await window.electronAPI.getLicenseStatus()
+      } else {
+        result = { status: 'active', authorizedModules: Object.values(ROUTE_MODULE_MAP).filter(Boolean) as string[] }
+      }
+
+      // If the API is a demo server, force simple dashboard mode
+      try {
+        const res = await fetch('/api/health')
+        const json = await res.json()
+        const isDemo = json?.data?.mode === 'demo' || json?.data?.mode === 'DEMO'
+        if (isDemo) {
+          result = { ...(result || {}), payload: { ...(result?.payload || {}), dashboardMode: 'simple' } }
+        }
+      } catch {
+        // ignore errors
+      }
+
       setStatus(result)
     } finally {
       setLoading(false)

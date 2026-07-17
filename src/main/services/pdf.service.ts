@@ -21,6 +21,7 @@ interface InvoiceDoc {
   customerTvaCode?: string
   vehicleRegistration?: string
   customerMatricule?: string 
+  customerId?: string
   lines: InvoiceLine[]
   totalHT: number
   totalTVA: number
@@ -302,7 +303,8 @@ function buildCustomerFields(inv: InvoiceDoc): PartyField[] {
   if (inv.customerAddress?.trim()) fields.push({ label: 'Adresse', value: inv.customerAddress.trim() })
   if (inv.customerMatricule?.trim()) {
     fields.push({ label: 'Mat. fiscale / Code TVA', value: inv.customerMatricule.trim() })
-  } else if (inv.customerTvaCode?.trim()) {
+  }
+  if (inv.customerTvaCode?.trim()) {
     fields.push({ label: 'Code TVA', value: inv.customerTvaCode.trim() })
   }
   return fields
@@ -675,10 +677,42 @@ function drawTaxBox(page: PDFPage, font: PDFFont, fontBold: PDFFont, inv: Invoic
   drawLeft(page, 'TAUX', boxX + 94, boxY + TAX_BOX_HEIGHT - 12, fontBold, FONT_SIZES.value, COLORS.black)
   drawLeft(page, 'MONTANT TVA', boxX + 154, boxY + TAX_BOX_HEIGHT - 12, fontBold, FONT_SIZES.value, COLORS.black)
 
-  const vatRate = inv.includeTva ? '19.00' : '0.00'
-  drawLeft(page, fmt3(inv.totalHT), boxX + 4, boxY + 4, font, FONT_SIZES.value, COLORS.black)
-  drawCenter(page, vatRate, boxX + 88, 60, boxY + 4, font, FONT_SIZES.value, COLORS.black)
-  drawRight(page, fmt3(inv.totalTVA), boxX + 148, TAX_BOX_WIDTH - 148, boxY + 4, font, FONT_SIZES.value, COLORS.black)
+  // Regrouper les lignes par taux TVA
+  const vatGroups = new Map<number, { base: number; tva: number }>()
+  inv.lines.forEach((line) => {
+    const tvaRate = line.tva ?? 0
+    const base = line.totalHT ?? 0
+    // Preferer le montant TVA déjà calculé, sinon recalculer si includeTva est true
+    let tvaAmount = (line.totalTTC ?? 0) - (line.totalHT ?? 0)
+    if ((tvaAmount === 0 || Number.isNaN(tvaAmount)) && inv.includeTva && (line.tva ?? 0) > 0) {
+      tvaAmount = base * ((line.tva ?? 0) / 100)
+    }
+
+    if (!vatGroups.has(tvaRate)) {
+      vatGroups.set(tvaRate, { base: 0, tva: 0 })
+    }
+    const group = vatGroups.get(tvaRate)!
+    group.base += base
+    group.tva += tvaAmount
+  })
+
+  // Afficher chaque groupe de taux TVA
+  let yOffset = boxY + 4
+  vatGroups.forEach((group, rate) => {
+    if (group.base > 0 || group.tva > 0) {
+      drawLeft(page, fmt3(group.base), boxX + 4, yOffset, font, FONT_SIZES.value, COLORS.black)
+      drawCenter(page, rate.toFixed(2), boxX + 88, 60, yOffset, font, FONT_SIZES.value, COLORS.black)
+      drawRight(page, fmt3(group.tva), boxX + 148, TAX_BOX_WIDTH - 148, yOffset, font, FONT_SIZES.value, COLORS.black)
+      yOffset -= 12
+    }
+  })
+
+  // Si aucun groupe avec TVA, afficher le total HT avec taux 0
+  if (vatGroups.size === 0 || (vatGroups.size === 1 && vatGroups.has(0))) {
+    drawLeft(page, fmt3(inv.totalHT), boxX + 4, boxY + 4, font, FONT_SIZES.value, COLORS.black)
+    drawCenter(page, '0.00', boxX + 88, 60, boxY + 4, font, FONT_SIZES.value, COLORS.black)
+    drawRight(page, fmt3(inv.totalTVA), boxX + 148, TAX_BOX_WIDTH - 148, boxY + 4, font, FONT_SIZES.value, COLORS.black)
+  }
 }
 
 function drawTotalsBox(page: PDFPage, font: PDFFont, fontBold: PDFFont, inv: InvoiceDoc, cfg: SettingsDoc, title: string, layout: SummaryLayout) {

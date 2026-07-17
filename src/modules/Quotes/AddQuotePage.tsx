@@ -31,8 +31,9 @@ export default function AddQuotePage() {
   const [customerId, setCustomerId] = useState('')
   const [customerName, setCustomerName] = useState('')
   const [customerAddress, setCustomerAddress] = useState('')
+  const [customerMatricule, setCustomerMatricule] = useState('')
   const [lines, setLines] = useState<DocumentEditorLine[]>([])
-  const [includeTva, setIncludeTva] = useState(false)
+  const [includeTva, setIncludeTva] = useState(true)
   const [validityDays, setValidityDays] = useState(30)
   const [saveLoading, setSaveLoading] = useState(false)
   const [lastQuote, setLastQuote] = useState<SaleDocument | null>(null)
@@ -49,6 +50,8 @@ export default function AddQuotePage() {
       return null
     }
     return {
+      customerId: customerId || undefined,
+      customerMatricule: customerMatricule?.trim() || undefined,
       customerName,
       customerAddress,
       lines: cleaned,
@@ -61,6 +64,7 @@ export default function AddQuotePage() {
     setCustomerId('')
     setCustomerName('')
     setCustomerAddress('')
+    setCustomerMatricule('')
     setLines([])
     setIncludeTva(false)
     setValidityDays(30)
@@ -119,10 +123,13 @@ export default function AddQuotePage() {
         onIncludeTvaChange={setIncludeTva}
         customers={customersData?.data ?? []}
         customerId={customerId}
+        customerMatricule={customerMatricule}
+        onUpdateMatricule={setCustomerMatricule}
         onSelectCustomer={(customer) => {
           setCustomerId(customer?._id ?? '')
           setCustomerName(customer?.name ?? '')
           setCustomerAddress(customer?.address ?? '')
+          setCustomerMatricule(customer?.matricule ?? '')
         }}
         lines={lines}
         onLinesChange={setLines}

@@ -79,6 +79,7 @@ const customerSchema = new mongoose.Schema(
     address: String,
     email: String,
     matricule: String,
+    tvaCode: String,
     creditBalance: { type: Number, default: 0 },
     totalPurchases: { type: Number, default: 0 },
     isDeleted: { type: Boolean, default: false }
@@ -212,6 +213,7 @@ const purchaseSlipSchema = new mongoose.Schema(
     customerName: String,
     customerAddress: String,
     customerMatricule: String,
+    customerTvaCode: String,
     lines: [saleLineSchema],
     totalHT: { type: Number, default: 0 },
     totalTVA: { type: Number, default: 0 },
@@ -243,6 +245,8 @@ const invoiceSchema = new mongoose.Schema(
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
     customerName: String,
     customerAddress: String,
+    customerMatricule: String,
+    customerTvaCode: String,
     lines: [saleLineSchema],
     totalHT: { type: Number, default: 0 },
     totalTVA: { type: Number, default: 0 },
@@ -257,7 +261,8 @@ const invoiceSchema = new mongoose.Schema(
     representative: String,
     deliveryPerson: String,
     validUntil: Date,
-    includeTva: { type: Boolean, default: false }
+    includeTva: { type: Boolean, default: false },
+    sourceQuoteId: { type: mongoose.Schema.Types.ObjectId, ref: 'Quote' }
   },
   { timestamps: true }
 )
@@ -405,13 +410,16 @@ const quoteSchema = new mongoose.Schema(
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
     customerName: String,
     customerAddress: String,
+    customerMatricule: String,
+    customerTvaCode: String,
     lines: [quoteLineSchema],
     totalHT: { type: Number, default: 0 },
     totalTVA: { type: Number, default: 0 },
     timbreFiscal: { type: Number, default: 0 },
     totalTTC: { type: Number, default: 0 },
     includeTva: { type: Boolean, default: false },
-    validUntil: Date
+    validUntil: Date,
+    convertedInvoiceId: { type: mongoose.Schema.Types.ObjectId, ref: 'Invoice' }
   },
   { timestamps: true }
 )

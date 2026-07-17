@@ -79,11 +79,12 @@ export default function AddDeliveryNotePage() {
   const [customerId, setCustomerId] = useState('')
   const [customerName, setCustomerName] = useState('')
   const [customerAddress, setCustomerAddress] = useState('')
+  const [customerMatricule, setCustomerMatricule] = useState('')
   const [deliveryDriverName, setDeliveryDriverName] = useState('')
   const [deliveryDriverCin, setDeliveryDriverCin] = useState('')
   const [deliveryVehiclePlate, setDeliveryVehiclePlate] = useState('')
   const [lines, setLines] = useState<DocumentEditorLine[]>([])
-  const [includeTva, setIncludeTva] = useState(false)
+  const [includeTva, setIncludeTva] = useState(true)
 
   const { data: customersData } = useQuery({
     queryKey: ['customers'],
@@ -107,6 +108,7 @@ export default function AddDeliveryNotePage() {
         setCustomerId(extractId(invoice.customerId))
         setCustomerName(invoice.customerName || populatedCustomer?.name || '')
         setCustomerAddress(invoice.customerAddress || populatedCustomer?.address || '')
+        setCustomerMatricule((invoice as any).customerMatricule || populatedCustomer?.matricule || '')
         setIncludeTva(invoice.includeTva ?? false)
         setLines((invoice.lines || []).map(mapInvoiceLine))
       })
@@ -131,6 +133,7 @@ export default function AddDeliveryNotePage() {
     }
     createMutation.mutate({
       customerId: customerId || undefined,
+      customerMatricule: customerMatricule?.trim() || undefined,
       customerName,
       customerAddress,
       sourceInvoiceId: mode === 'from-invoice' ? sourceInvoiceId : undefined,
@@ -199,10 +202,13 @@ export default function AddDeliveryNotePage() {
         onIncludeTvaChange={setIncludeTva}
         customers={customersData?.data ?? []}
         customerId={customerId}
+        customerMatricule={customerMatricule}
+        onUpdateMatricule={setCustomerMatricule}
         onSelectCustomer={(customer) => {
           setCustomerId(customer?._id ?? '')
           setCustomerName(customer?.name ?? '')
           setCustomerAddress(customer?.address ?? '')
+          setCustomerMatricule(customer?.matricule ?? '')
         }}
         showDeliveryFields
         deliveryAddress={customerAddress}

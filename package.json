@@ -7,10 +7,15 @@
   "license": "MIT",
   "scripts": {
     "dev": "electron-vite dev",
+    "dev:demo": "cross-env DEMO_MODE=demo electron-vite dev",
     "build": "electron-vite build",
+    "build:demo": "cross-env DEMO_MODE=demo electron-vite build",
     "preview": "electron-vite preview",
     "test": "vitest run",
     "dist": "npm run build && electron-builder",
+    "dist:demo": "npm run build:demo && electron-builder",
+    "dist:portable-demo": "npm run build:demo && electron-builder --win portable",
+    "dist:demo-release": "npm run build:demo && electron-builder --config.directories.output=release-demo --win portable",
     "dist:win": "npm run build && electron-builder --win",
     "test:watch": "vitest",
     "lint": "tsc --noEmit"
@@ -51,5 +56,7 @@
     "typescript": "^5.7.2",
     "vite": "^5.4.11",
     "vitest": "^2.1.8"
+  ,
+    "cross-env": "^7.0.3"
   }
 }

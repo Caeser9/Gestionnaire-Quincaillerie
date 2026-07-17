@@ -143,8 +143,14 @@ export function DocumentEditor({
     const current = next[index]
     const quantity = Number(patch.quantity ?? current.quantity ?? 0)
     const unitPrice = Number(patch.unitPrice ?? current.unitPrice ?? 0)
-    const totalHT = quantity * unitPrice
-    next[index] = { ...current, ...patch, quantity, unitPrice, totalHT, totalTTC: totalHT }
+    const discount = Number(patch.discount ?? current.discount ?? 0)
+    const tva = Number(patch.tva ?? current.tva ?? 0)
+    const htBeforeDiscount = quantity * unitPrice
+    const discountAmount = htBeforeDiscount * (discount / 100)
+    const totalHT = htBeforeDiscount - discountAmount
+    const tvaAmount = includeTva ? (totalHT * tva / 100) : 0
+    const totalTTC = totalHT + tvaAmount
+    next[index] = { ...current, ...patch, quantity, unitPrice, discount, tva, totalHT, totalTTC }
     onLinesChange(next)
   }
 
@@ -162,16 +168,25 @@ export function DocumentEditor({
 
   const addPendingToLines = () => {
     if (!pendingItem) return
+    const quantity = pendingItem.quantity
+    const unitPrice = pendingItem.unitPrice
+    const discount = pendingItem.discount
+    const tva = pendingItem.tva
+    const htBeforeDiscount = quantity * unitPrice
+    const discountAmount = htBeforeDiscount * (discount / 100)
+    const totalHT = htBeforeDiscount - discountAmount
+    const tvaAmount = includeTva ? (totalHT * tva / 100) : 0
+    const totalTTC = totalHT + tvaAmount
     const newLine = {
       productId: pendingItem.productId,
       reference: pendingItem.reference,
       designation: pendingItem.designation,
-      quantity: pendingItem.quantity,
-      unitPrice: pendingItem.unitPrice,
-      discount: pendingItem.discount,
-      tva: pendingItem.tva,
-      totalHT: pendingItem.quantity * pendingItem.unitPrice,
-      totalTTC: pendingItem.quantity * pendingItem.unitPrice
+      quantity,
+      unitPrice,
+      discount,
+      tva,
+      totalHT,
+      totalTTC
     }
     onLinesChange([...lines, newLine])
     setPendingItem(null)

@@ -210,6 +210,7 @@ router.post('/sales', asyncHandler(async (req, res) => {
     let resolvedCustomerName = parsed.data.customerName?.trim() || undefined
     let resolvedCustomerAddress = parsed.data.customerAddress?.trim() || undefined
     let resolvedCustomerMatricule = parsed.data.customerMatricule?.trim() || undefined
+    let resolvedCustomerTvaCode = undefined
 
     if (!resolvedCustomerId && resolvedCustomerName) {
       const result = await findOrCreateCustomerByName(resolvedCustomerName, {
@@ -222,6 +223,7 @@ router.post('/sales', asyncHandler(async (req, res) => {
         resolvedCustomerName = result.customer.name
         resolvedCustomerAddress = result.customer.address || resolvedCustomerAddress
         resolvedCustomerMatricule = result.customer.matricule || resolvedCustomerMatricule
+        resolvedCustomerTvaCode = result.customer.tvaCode
       }
     } else if (resolvedCustomerId) {
       const customer = await Customer.findById(resolvedCustomerId)
@@ -229,6 +231,7 @@ router.post('/sales', asyncHandler(async (req, res) => {
         resolvedCustomerName = resolvedCustomerName || customer.name
         resolvedCustomerAddress = customer.address || resolvedCustomerAddress
         resolvedCustomerMatricule = resolvedCustomerMatricule || customer.matricule || undefined
+        resolvedCustomerTvaCode = customer.tvaCode
         let changed = false
         if (parsed.data.customerPhone?.trim() && customer.phone !== parsed.data.customerPhone.trim()) {
           customer.phone = parsed.data.customerPhone.trim()
@@ -298,6 +301,7 @@ router.post('/sales', asyncHandler(async (req, res) => {
       customerName,
       customerAddress,
       customerMatricule: resolvedCustomerMatricule,
+      customerTvaCode: resolvedCustomerTvaCode,
       lines: saleLines,
       totalHT,
       totalTVA,

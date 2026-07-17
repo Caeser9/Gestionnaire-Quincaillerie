@@ -1,0 +1,45 @@
+{
+  "settings": {
+    "companyName": "Supermarché Kaycer",
+    "storeName": "Supermarché Kaycer",
+    "storeIcon": "store",
+    "companyAddress": "",
+    "companyPhone": "29665911",
+    "defaultTva": 19,
+    "currency": "DT",
+    "mongoUri": "mongodb://127.0.0.1:27017/quincaillerie"
+  },
+  "categories": [
+    { "_id": "cat-electricite", "name": "Electricite", "prefix": "ELE" },
+    { "_id": "cat-plomberie", "name": "Plomberie", "prefix": "PLB" },
+    { "_id": "cat-outillage", "name": "Outillage", "prefix": "OUT" },
+    { "_id": "cat-peinture", "name": "Peinture", "prefix": "PEI" }
+  ],
+  "suppliers": [
+    { "_id": "sup-001", "companyName": "Comptoir General", "phone": "71111222" },
+    { "_id": "sup-002", "companyName": "Tunisie Outillage", "phone": "72222333" }
+  ],
+  "customers": [
+    { "_id": "cus-001", "reference": "CLI-000001", "name": "hamadi", "phone": "29665911", "balance": 0 },
+    { "_id": "cus-002", "reference": "CLI-000002", "name": "Kaycer Khouini", "phone": "29665911", "balance": 0 },
+    { "_id": "cus-003", "reference": "CLI-000003", "name": "Abdelkader", "phone": "22000111", "balance": 0 }
+  ],
+  "products": [
+    { "_id": "prd-001", "reference": "ELE000001", "designation": "Carte Arduino", "barcode": "6190000000010", "categoryId": "cat-electricite", "supplierId": "sup-001", "purchasePrice": 18, "salePrice": 30, "profitMargin": 66.67, "discount": 0, "tva": 19, "stock": 100, "minStock": 5, "unit": "piece", "location": "A1" },
+    { "_id": "prd-002", "reference": "OUT000002", "designation": "test", "barcode": "6190000000027", "categoryId": "cat-outillage", "supplierId": "sup-002", "purchasePrice": 10, "salePrice": 15, "profitMargin": 50, "discount": 0, "tva": 19, "stock": 40, "minStock": 5, "unit": "piece", "location": "B2" },
+    { "_id": "prd-003", "reference": "ELE000003", "designation": "fil rigide 1.5mm", "barcode": "6190000000034", "categoryId": "cat-electricite", "supplierId": "sup-001", "purchasePrice": 0.7, "salePrice": 1.2, "profitMargin": 71.43, "discount": 0, "tva": 19, "stock": 29, "minStock": 10, "unit": "m", "location": "C1" },
+    { "_id": "prd-004", "reference": "PLB000004", "designation": "Semant", "barcode": "6190000000041", "categoryId": "cat-plomberie", "supplierId": "sup-001", "purchasePrice": 7, "salePrice": 11.5, "profitMargin": 64.29, "discount": 0, "tva": 19, "stock": 1, "minStock": 3, "unit": "sac", "location": "D1" },
+    { "_id": "prd-005", "reference": "OUT000005", "designation": "Marteau 500g", "barcode": "6190000000058", "categoryId": "cat-outillage", "supplierId": "sup-002", "purchasePrice": 12, "salePrice": 19.9, "profitMargin": 65.83, "discount": 0, "tva": 19, "stock": 18, "minStock": 4, "unit": "piece", "location": "B1" },
+    { "_id": "prd-006", "reference": "PEI000006", "designation": "Peinture blanche 5L", "barcode": "6190000000065", "categoryId": "cat-peinture", "supplierId": "sup-001", "purchasePrice": 22, "salePrice": 34.5, "profitMargin": 56.82, "discount": 0, "tva": 19, "stock": 12, "minStock": 3, "unit": "L", "location": "P1" }
+  ],
+  "invoices": [],
+  "purchaseSlips": [],
+  "purchaseOrders": [
+    { "_id": "po-001", "reference": "BC-2026-000012", "supplierId": "sup-001", "status": "received", "totalTTC": 420, "createdAt": "2026-06-30T09:10:00.000Z" },
+    { "_id": "po-002", "reference": "BC-2026-000011", "supplierId": "sup-002", "status": "received", "totalTTC": 360, "createdAt": "2026-06-30T08:20:00.000Z" },
+    { "_id": "po-003", "reference": "BC-2026-000010", "supplierId": "sup-001", "status": "received", "totalTTC": 250, "createdAt": "2026-06-29T15:30:00.000Z" }
+  ],
+  "stockMovements": [],
+  "expenses": [],
+  "counters": { "PRD": 6, "CLI": 3, "FAC": 0, "BA": 0, "sale": 0, "movement": 0, "supplier": 2, "purchaseOrder": 12 }
+}

@@ -22,6 +22,8 @@ export type CreateDeliveryNoteInput = {
   customerId?: unknown
   customerName?: string
   customerAddress?: string
+  customerTvaCode?: string
+  customerMatricule?: string
   lines: DeliveryNoteLine[]
   includeTva?: boolean
   linkToInvoice?: boolean
@@ -114,6 +116,8 @@ export async function createDeliveryNote(input: CreateDeliveryNoteInput) {
     customerId: input.customerId || undefined,
     customerName: input.customerName?.trim() || 'Client comptant',
     customerAddress: input.customerAddress?.trim() || undefined,
+    customerTvaCode: input.customerTvaCode,
+    customerMatricule: input.customerMatricule,
     lines: resolvedLines.map(mapLineForStorage),
     totalHT: totals.totalHT,
     totalTVA: totals.totalTVA,

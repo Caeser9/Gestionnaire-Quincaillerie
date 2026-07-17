@@ -92,7 +92,15 @@ let dbCache: DemoDb | null = null
 
 function demoDataPath(): string {
   const portableDir = process.env.PORTABLE_EXECUTABLE_DIR
-  return path.join(portableDir || electronApp.getPath('userData'), 'demo-data.json')
+  if (portableDir) return path.join(portableDir, 'demo-data.json')
+
+  // Prefer a demo-data.json shipped in the app resources (when packaged)
+  try {
+    const resourcePath = path.join(process.resourcesPath || path.dirname(process.execPath), 'demo-data.json')
+    return resourcePath
+  } catch {
+    return path.join(electronApp.getPath('userData'), 'demo-data.json')
+  }
 }
 
 function nowIso(): string {
@@ -141,7 +149,7 @@ function seedDb(): DemoDb {
   ]
 
   return {
-    settings: { ...DEFAULT_SETTINGS, companyName: 'Quincaillerie Demo', companyPhone: '29665911' },
+    settings: { ...DEFAULT_SETTINGS, companyName: 'Supermarché Kaycer', storeName: 'Supermarché Kaycer', storeIcon: 'store', companyPhone: '29665911' },
     categories,
     suppliers,
     customers,

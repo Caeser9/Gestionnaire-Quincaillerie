@@ -51,12 +51,21 @@ export default function DashboardPage() {
   const navigate = useNavigate()
   const { dashboardMode: licenseDashboardMode } = useLicense()
   const mode = useMemo<DashboardMode>(() => resolveDashboardMode(licenseDashboardMode), [licenseDashboardMode])
-  const { data, isLoading } = useQuery({
-    queryKey: ['dashboard'],
-    queryFn: () => apiRequest<DashboardData>('/dashboard')
+  const { data: healthData, isLoading: healthLoading } = useQuery({
+    queryKey: ['health'],
+    queryFn: () => apiRequest<{ data: { mode?: string } }>('/health'),
+    staleTime: 5 * 60 * 1000
   })
 
-  if (isLoading) {
+  const isDemo = Boolean(healthData?.mode && String(healthData.mode).toLowerCase().includes('demo'))
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['dashboard'],
+    queryFn: () => apiRequest<DashboardData>('/dashboard'),
+    enabled: !isDemo && !healthLoading
+  })
+
+  if (healthLoading || isLoading) {
     return (
       <div className="flex flex-col items-center justify-center h-64 gap-3">
         <div className="animate-spin rounded-full h-10 w-10 border-2 border-primary-200 border-t-primary-600" />
@@ -72,6 +81,48 @@ export default function DashboardPage() {
   })
 
   const shortcuts = getDashboardShortcutItems()
+
+  // If we're running in demo mode, force simple dashboard (no graphs/stats)
+  if (isDemo) {
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          title="Tableau de bord simple"
+          subtitle="Accès rapide aux modules principaux"
+        />
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {shortcuts.map((shortcut) => {
+            const iconMap: Record<string, JSX.Element> = {
+              pos: <PanelRight size={20} />,
+              billing: <FileText size={20} />,
+              delivery: <Truck size={20} />,
+              quotes: <ClipboardList size={20} />,
+              products: <Boxes size={20} />,
+              customers: <Users size={20} />,
+              debts: <ShoppingBag size={20} />,
+              inventory: <Warehouse size={20} />,
+            }
+
+            return (
+              <button
+                key={shortcut.id}
+                type="button"
+                onClick={() => navigate(shortcut.path)}
+                className="rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary-300 hover:shadow-md dark:border-slate-800 dark:bg-slate-900"
+              >
+                <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-primary-50 text-primary-600 dark:bg-primary-900/20 dark:text-primary-300">
+                  {iconMap[shortcut.id]}
+                </div>
+                <p className="text-base font-semibold text-slate-800 dark:text-slate-200">{shortcut.label}</p>
+                <p className="mt-1 text-sm text-slate-500">{shortcut.description}</p>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
 
   if (mode === 'simple') {
     return (

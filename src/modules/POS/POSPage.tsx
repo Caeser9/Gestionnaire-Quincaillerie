@@ -76,6 +76,44 @@ export default function POSPage() {
     }
   }, [barcodeProduct, state])
 
+  // Quotes loader
+  const { data: quotesData } = useQuery({
+    queryKey: ['quotes-for-pos'],
+    queryFn: () => apiRequest<{ data: SaleDocument[] }>('/quotes?limit=200'),
+  })
+
+  const loadQuote = async (quoteId: string) => {
+    if (!quoteId) return
+    try {
+      const quote = await apiRequest<SaleDocument>(`/quotes/${quoteId}`)
+      // Map quote lines to cart items
+      const mapped = (quote.lines || []).map((line) => ({
+        lineId: `quote-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        productId: line.productId ? String(line.productId) : `custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        reference: line.reference || 'DIV',
+        designation: line.designation || '',
+        quantity: line.quantity || 1,
+        unitPrice: line.unitPrice || 0,
+        discount: line.discount ?? 0,
+        tva: line.tva ?? 19,
+        stock: 0,
+        purchasePrice: 0,
+        isCustom: !line.productId
+      }))
+
+      state.setCart(mapped)
+      state.setCustomerId(quote.customerId ? String(quote.customerId) : '')
+      state.setCustomerName(quote.customerName || '')
+      state.setCustomerAddress(quote.customerAddress || '')
+      state.setCustomerMatricule(quote.customerMatricule || '')
+      state.setInvoiceDate(new Date(quote.createdAt).toISOString().slice(0,10))
+      toast.success('Devis chargé dans la facture')
+      setTimeout(() => searchInputRef.current?.focus(), 100)
+    } catch (err) {
+      toast.error('Impossible de charger le devis')
+    }
+  }
+
   useEffect(() => { setTimeout(() => searchInputRef.current?.focus(), 100) }, [])
   useEffect(() => {
     if (state.cart.length > 0 && !state.pendingItem) searchInputRef.current?.focus()
@@ -242,6 +280,20 @@ export default function POSPage() {
         onOrderNumberChange={state.setOrderNumber}
         onDeliveryNumberChange={state.setDeliveryNumber}
       />
+
+      <div className="flex items-center gap-2">
+        <label className="text-sm font-medium text-slate-600">Charger un devis :</label>
+        <select
+          className="input w-80"
+          onChange={(e) => void loadQuote(e.target.value)}
+          defaultValue=""
+        >
+          <option value="">Sélectionnez un devis…</option>
+          {quotesData?.data?.map((q) => (
+            <option key={q._id} value={q._id}>{`${q.reference} — ${q.customerName || 'Client comptant'}`}</option>
+          ))}
+        </select>
+      </div>
 
       <POSProductInput
         ref={searchInputRef}

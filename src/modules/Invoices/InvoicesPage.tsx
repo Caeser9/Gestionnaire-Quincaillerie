@@ -383,6 +383,22 @@ export default function InvoicesPage() {
     onError: (err: Error) => toast.error(err.message)
   })
 
+  const convertQuoteToInvoiceMutation = useMutation({
+    mutationFn: (quoteId: string) =>
+      apiRequest(`/quotes/${quoteId}/convert-to-invoice`, { method: 'POST', body: JSON.stringify({}) }),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['invoices'] })
+      queryClient.invalidateQueries({ queryKey: ['quotes'] })
+      if (data.alreadyConverted) {
+        toast.success('Facture existante affichée')
+      } else {
+        toast.success('Facture créée à partir du devis')
+      }
+      setTab('invoices')
+    },
+    onError: (err: Error) => toast.error(err.message)
+  })
+
   const deleteQuoteMutation = useMutation({
     mutationFn: (id: string) => apiRequest(`/quotes/${id}`, { method: 'DELETE' }),
     onSuccess: () => {
@@ -593,6 +609,7 @@ export default function InvoicesPage() {
                   <td className="font-semibold">{formatCurrency(q.totalTTC)}</td>
                   <td>
                     <div className="flex gap-1 justify-end">
+                      {/* Bouton de conversion supprimé (conversion automatique désactivée) */}
                       <button onClick={() => openQuoteDetail(q._id)} className="btn-ghost btn-sm" title="Voir">
                         <Eye size={15} />
                       </button>

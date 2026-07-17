@@ -159,6 +159,7 @@ const customerSchema$1 = new mongoose.Schema(
     address: String,
     email: String,
     matricule: String,
+    tvaCode: String,
     creditBalance: { type: Number, default: 0 },
     totalPurchases: { type: Number, default: 0 },
     isDeleted: { type: Boolean, default: false }
@@ -285,6 +286,7 @@ const purchaseSlipSchema = new mongoose.Schema(
     customerName: String,
     customerAddress: String,
     customerMatricule: String,
+    customerTvaCode: String,
     lines: [saleLineSchema],
     totalHT: { type: Number, default: 0 },
     totalTVA: { type: Number, default: 0 },
@@ -315,6 +317,8 @@ const invoiceSchema = new mongoose.Schema(
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: "Customer" },
     customerName: String,
     customerAddress: String,
+    customerMatricule: String,
+    customerTvaCode: String,
     lines: [saleLineSchema],
     totalHT: { type: Number, default: 0 },
     totalTVA: { type: Number, default: 0 },
@@ -329,7 +333,8 @@ const invoiceSchema = new mongoose.Schema(
     representative: String,
     deliveryPerson: String,
     validUntil: Date,
-    includeTva: { type: Boolean, default: false }
+    includeTva: { type: Boolean, default: false },
+    sourceQuoteId: { type: mongoose.Schema.Types.ObjectId, ref: "Quote" }
   },
   { timestamps: true }
 );
@@ -466,13 +471,16 @@ const quoteSchema = new mongoose.Schema(
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: "Customer" },
     customerName: String,
     customerAddress: String,
+    customerMatricule: String,
+    customerTvaCode: String,
     lines: [quoteLineSchema],
     totalHT: { type: Number, default: 0 },
     totalTVA: { type: Number, default: 0 },
     timbreFiscal: { type: Number, default: 0 },
     totalTTC: { type: Number, default: 0 },
     includeTva: { type: Boolean, default: false },
-    validUntil: Date
+    validUntil: Date,
+    convertedInvoiceId: { type: mongoose.Schema.Types.ObjectId, ref: "Invoice" }
   },
   { timestamps: true }
 );
@@ -712,7 +720,8 @@ function buildCustomerFields(inv) {
   if (inv.customerAddress?.trim()) fields.push({ label: "Adresse", value: inv.customerAddress.trim() });
   if (inv.customerMatricule?.trim()) {
     fields.push({ label: "Mat. fiscale / Code TVA", value: inv.customerMatricule.trim() });
-  } else if (inv.customerTvaCode?.trim()) {
+  }
+  if (inv.customerTvaCode?.trim()) {
     fields.push({ label: "Code TVA", value: inv.customerTvaCode.trim() });
   }
   return fields;
@@ -1025,10 +1034,35 @@ function drawTaxBox(page2, font, fontBold, inv, layout) {
   drawLeft(page2, "BASE TAXABLE", boxX + 4, boxY + TAX_BOX_HEIGHT - 12, fontBold, FONT_SIZES.value, COLORS.black);
   drawLeft(page2, "TAUX", boxX + 94, boxY + TAX_BOX_HEIGHT - 12, fontBold, FONT_SIZES.value, COLORS.black);
   drawLeft(page2, "MONTANT TVA", boxX + 154, boxY + TAX_BOX_HEIGHT - 12, fontBold, FONT_SIZES.value, COLORS.black);
-  const vatRate = inv.includeTva ? "19.00" : "0.00";
-  drawLeft(page2, fmt3(inv.totalHT), boxX + 4, boxY + 4, font, FONT_SIZES.value, COLORS.black);
-  drawCenter(page2, vatRate, boxX + 88, 60, boxY + 4, font, FONT_SIZES.value, COLORS.black);
-  drawRight(page2, fmt3(inv.totalTVA), boxX + 148, TAX_BOX_WIDTH - 148, boxY + 4, font, FONT_SIZES.value, COLORS.black);
+  const vatGroups = /* @__PURE__ */ new Map();
+  inv.lines.forEach((line) => {
+    const tvaRate = line.tva ?? 0;
+    const base = line.totalHT ?? 0;
+    let tvaAmount = (line.totalTTC ?? 0) - (line.totalHT ?? 0);
+    if ((tvaAmount === 0 || Number.isNaN(tvaAmount)) && inv.includeTva && (line.tva ?? 0) > 0) {
+      tvaAmount = base * ((line.tva ?? 0) / 100);
+    }
+    if (!vatGroups.has(tvaRate)) {
+      vatGroups.set(tvaRate, { base: 0, tva: 0 });
+    }
+    const group = vatGroups.get(tvaRate);
+    group.base += base;
+    group.tva += tvaAmount;
+  });
+  let yOffset = boxY + 4;
+  vatGroups.forEach((group, rate) => {
+    if (group.base > 0 || group.tva > 0) {
+      drawLeft(page2, fmt3(group.base), boxX + 4, yOffset, font, FONT_SIZES.value, COLORS.black);
+      drawCenter(page2, rate.toFixed(2), boxX + 88, 60, yOffset, font, FONT_SIZES.value, COLORS.black);
+      drawRight(page2, fmt3(group.tva), boxX + 148, TAX_BOX_WIDTH - 148, yOffset, font, FONT_SIZES.value, COLORS.black);
+      yOffset -= 12;
+    }
+  });
+  if (vatGroups.size === 0 || vatGroups.size === 1 && vatGroups.has(0)) {
+    drawLeft(page2, fmt3(inv.totalHT), boxX + 4, boxY + 4, font, FONT_SIZES.value, COLORS.black);
+    drawCenter(page2, "0.00", boxX + 88, 60, boxY + 4, font, FONT_SIZES.value, COLORS.black);
+    drawRight(page2, fmt3(inv.totalTVA), boxX + 148, TAX_BOX_WIDTH - 148, boxY + 4, font, FONT_SIZES.value, COLORS.black);
+  }
 }
 function drawTotalsBox(page2, font, fontBold, inv, cfg, title, layout) {
   const boxX = PAGE_WIDTH - MARGIN - TOTALS_BOX_WIDTH;
@@ -1948,6 +1982,8 @@ async function createDeliveryNote(input) {
     customerId: input.customerId || void 0,
     customerName: input.customerName?.trim() || "Client comptant",
     customerAddress: input.customerAddress?.trim() || void 0,
+    customerTvaCode: input.customerTvaCode,
+    customerMatricule: input.customerMatricule,
     lines: resolvedLines.map(mapLineForStorage),
     totalHT: totals.totalHT,
     totalTVA: totals.totalTVA,
@@ -2964,6 +3000,7 @@ router$6.post("/sales", asyncHandler(async (req, res) => {
     let resolvedCustomerName = parsed.data.customerName?.trim() || void 0;
     let resolvedCustomerAddress = parsed.data.customerAddress?.trim() || void 0;
     let resolvedCustomerMatricule = parsed.data.customerMatricule?.trim() || void 0;
+    let resolvedCustomerTvaCode = void 0;
     if (!resolvedCustomerId && resolvedCustomerName) {
       const result = await findOrCreateCustomerByName(resolvedCustomerName, {
         phone: parsed.data.customerPhone?.trim(),
@@ -2975,6 +3012,7 @@ router$6.post("/sales", asyncHandler(async (req, res) => {
         resolvedCustomerName = result.customer.name;
         resolvedCustomerAddress = result.customer.address || resolvedCustomerAddress;
         resolvedCustomerMatricule = result.customer.matricule || resolvedCustomerMatricule;
+        resolvedCustomerTvaCode = result.customer.tvaCode;
       }
     } else if (resolvedCustomerId) {
       const customer = await Customer.findById(resolvedCustomerId);
@@ -2982,6 +3020,7 @@ router$6.post("/sales", asyncHandler(async (req, res) => {
         resolvedCustomerName = resolvedCustomerName || customer.name;
         resolvedCustomerAddress = customer.address || resolvedCustomerAddress;
         resolvedCustomerMatricule = resolvedCustomerMatricule || customer.matricule || void 0;
+        resolvedCustomerTvaCode = customer.tvaCode;
         let changed = false;
         if (parsed.data.customerPhone?.trim() && customer.phone !== parsed.data.customerPhone.trim()) {
           customer.phone = parsed.data.customerPhone.trim();
@@ -3047,6 +3086,7 @@ router$6.post("/sales", asyncHandler(async (req, res) => {
       customerName,
       customerAddress,
       customerMatricule: resolvedCustomerMatricule,
+      customerTvaCode: resolvedCustomerTvaCode,
       lines: saleLines,
       totalHT,
       totalTVA,
@@ -3812,6 +3852,8 @@ async function enrichDeliveryNoteForPdf(doc) {
     const customer = await Customer.findById(doc.customerId);
     if (customer) {
       data.customerCode = customer.reference;
+      data.customerTvaCode = customer.tvaCode;
+      data.customerMatricule = customer.matricule;
     }
   }
   data.deliveryDriverName = doc.deliveryDriverName || doc.deliveryPerson;
@@ -3852,6 +3894,8 @@ router$1.post("/delivery-notes/from-invoice/:invoiceId", asyncHandler(async (req
     customerId: invoice.customerId,
     customerName: invoice.customerName,
     customerAddress: invoice.customerAddress,
+    customerTvaCode: invoice.customerTvaCode,
+    customerMatricule: invoice.customerMatricule,
     lines: mapInvoiceLinesToDeliveryLines(invoice.lines || []),
     includeTva: invoice.includeTva,
     blNumber: invoice.blNumber || invoice.reference,
@@ -3902,17 +3946,28 @@ router$1.post("/delivery-notes/convert", asyncHandler(async (req, res) => {
     includeTva = includeTva ?? deliveryDocs[0].includeTva ?? false;
     deliveryDocs[0];
     const fromDeliveryNotes = deliveryDocs.flatMap(
-      (doc) => (doc.lines || []).map((line) => ({
-        productId: line.productId?.toString(),
-        reference: line.reference,
-        designation: line.designation || "",
-        quantity: line.quantity || 0,
-        unitPrice: line.unitPrice || 0,
-        discount: line.discount ?? 0,
-        tva: line.tva ?? 0,
-        totalHT: line.totalHT || 0,
-        totalTTC: line.totalTTC || 0
-      }))
+      (doc) => (doc.lines || []).map((line) => {
+        const unitPrice = line.unitPrice || 0;
+        const quantity = line.quantity || 0;
+        const discount = line.discount ?? 0;
+        const tvaRate = line.tva ?? 0;
+        const htBeforeDiscount = unitPrice * quantity;
+        const discountAmount = htBeforeDiscount * (discount / 100);
+        const totalHT = htBeforeDiscount - discountAmount;
+        const tvaAmount = includeTva ? totalHT * tvaRate / 100 : 0;
+        const totalTTC = totalHT + tvaAmount;
+        return {
+          productId: line.productId?.toString(),
+          reference: line.reference,
+          designation: line.designation || "",
+          quantity,
+          unitPrice,
+          discount,
+          tva: tvaRate,
+          totalHT,
+          totalTTC
+        };
+      })
     );
     mergedLines = [...mergedLines, ...fromDeliveryNotes];
   }
@@ -3925,11 +3980,19 @@ router$1.post("/delivery-notes/convert", asyncHandler(async (req, res) => {
   const totals = buildDocumentTotals$1(normalizedLines, { includeTva, timbreFiscal: timbre });
   const invoiceRef = await getNextReference("invoice", true);
   const primaryDelivery = body.deliveryIds?.length ? await PurchaseSlip.findById(body.deliveryIds[0]) : null;
+  let customerTvaCode = void 0;
+  if (customerId) {
+    const customer = await Customer.findById(customerId);
+    if (customer) {
+      customerTvaCode = customer.tvaCode;
+    }
+  }
   const invoice = await Invoice.create({
     reference: invoiceRef,
     customerId: customerId || void 0,
     customerName: customerName || "Client comptant",
     customerAddress: customerAddress || void 0,
+    customerTvaCode,
     lines: normalizedLines.map((line) => ({
       productId: line.productId,
       reference: line.reference,
@@ -3968,6 +4031,8 @@ router$1.post("/delivery-notes", asyncHandler(async (req, res) => {
     return;
   }
   let lines = body.lines;
+  let customerTvaCode = void 0;
+  let customerMatricule = void 0;
   if (body.sourceInvoiceId) {
     const invoice = await Invoice.findById(body.sourceInvoiceId);
     if (invoice?.lines?.length) {
@@ -3979,6 +4044,14 @@ router$1.post("/delivery-notes", asyncHandler(async (req, res) => {
         designation: line.designation || invoiceLines[index]?.designation || "",
         reference: line.reference || invoiceLines[index]?.reference || ""
       }));
+      customerTvaCode = invoice.customerTvaCode;
+      customerMatricule = invoice.customerMatricule;
+    }
+  } else if (body.customerId) {
+    const customer = await Customer.findById(body.customerId);
+    if (customer) {
+      customerTvaCode = customer.tvaCode;
+      customerMatricule = customer.matricule;
     }
   }
   const slip = await createDeliveryNote({
@@ -3986,6 +4059,8 @@ router$1.post("/delivery-notes", asyncHandler(async (req, res) => {
     customerId: body.customerId,
     customerName: body.customerName,
     customerAddress: body.customerAddress,
+    customerTvaCode,
+    customerMatricule,
     lines,
     includeTva: body.includeTva,
     deliveryDriverName: body.deliveryDriverName,
@@ -4019,14 +4094,42 @@ router.post("/quotes", asyncHandler(async (req, res) => {
     sendError(res, "Aucune ligne de devis", 400);
     return;
   }
-  const totals = buildDocumentTotals$1(body.lines, { includeTva: body.includeTva, timbreFiscal: 0 });
+  let customerTvaCode = void 0;
+  let customerMatricule = void 0;
+  if (body.customerId) {
+    const customer = await Customer.findById(body.customerId);
+    if (customer) {
+      customerTvaCode = customer.tvaCode;
+      customerMatricule = customer.matricule;
+    }
+  }
+  const recalculatedLines = body.lines.map((line) => {
+    const quantity = line.quantity;
+    const unitPrice = line.unitPrice;
+    const discount = line.discount ?? 0;
+    const tva = line.tva ?? 0;
+    const htBeforeDiscount = quantity * unitPrice;
+    const discountAmount = htBeforeDiscount * (discount / 100);
+    const totalHT = htBeforeDiscount - discountAmount;
+    const tvaAmount = body.includeTva ? totalHT * tva / 100 : 0;
+    const totalTTC = totalHT + tvaAmount;
+    return {
+      ...line,
+      totalHT,
+      totalTVA: tvaAmount,
+      totalTTC
+    };
+  });
+  const totals = buildDocumentTotals$1(recalculatedLines, { includeTva: body.includeTva, timbreFiscal: 0 });
   const ref = await getNextReference("quote", true);
   const quote = await Quote.create({
     reference: ref,
     customerId: body.customerId || void 0,
     customerName: body.customerName?.trim() || "Client comptant",
     customerAddress: body.customerAddress?.trim() || void 0,
-    lines: body.lines.map((line) => ({
+    customerMatricule,
+    customerTvaCode,
+    lines: recalculatedLines.map((line) => ({
       productId: void 0,
       reference: line.reference ?? "",
       designation: line.designation,
@@ -4035,7 +4138,7 @@ router.post("/quotes", asyncHandler(async (req, res) => {
       discount: line.discount ?? 0,
       tva: line.tva ?? 0,
       totalHT: line.totalHT,
-      totalTVA: Math.max(0, (line.totalTTC || 0) - (line.totalHT || 0)),
+      totalTVA: line.totalTVA,
       totalTTC: line.totalTTC
     })),
     totalHT: totals.totalHT,
@@ -4062,7 +4165,15 @@ router.get("/quotes/:id/pdf", asyncHandler(async (req, res) => {
     sendError(res, "Devis introuvable", 404);
     return;
   }
-  const pdfBytes = await generateInvoicePdf(quote, settings, "DEVIS");
+  const quoteData = quote.toObject();
+  if (quote.customerId) {
+    const customer = await Customer.findById(quote.customerId);
+    if (customer) {
+      quoteData.customerTvaCode = customer.tvaCode;
+      quoteData.customerMatricule = customer.matricule;
+    }
+  }
+  const pdfBytes = await generateInvoicePdf(quoteData, settings, "DEVIS");
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", `attachment; filename=${quote.reference}.pdf`);
   res.send(Buffer.from(pdfBytes));
@@ -4106,6 +4217,58 @@ router.delete("/quotes/:id", asyncHandler(async (req, res) => {
     return;
   }
   sendSuccess(res, { message: "Devis supprimé" });
+}));
+router.post("/quotes/:id/convert-to-invoice", asyncHandler(async (req, res) => {
+  const quote = await Quote.findById(req.params.id);
+  if (!quote) {
+    sendError(res, "Devis introuvable", 404);
+    return;
+  }
+  if (quote.convertedInvoiceId) {
+    const existingInvoice = await Invoice.findById(quote.convertedInvoiceId);
+    if (existingInvoice) {
+      sendSuccess(res, { invoice: existingInvoice, alreadyConverted: true }, 200);
+      return;
+    }
+  }
+  await Settings.findOne();
+  const timbre = TIMBRE_FISCAL_AMOUNT;
+  const totals = buildDocumentTotals$1(quote.lines || [], { includeTva: quote.includeTva, timbreFiscal: timbre });
+  const invoiceRef = await getNextReference("invoice", true);
+  let customerTvaCode = void 0;
+  if (quote.customerId) {
+    const customer = await Customer.findById(quote.customerId);
+    if (customer) {
+      customerTvaCode = customer.tvaCode;
+    }
+  }
+  const invoice = await Invoice.create({
+    reference: invoiceRef,
+    customerId: quote.customerId || void 0,
+    customerName: quote.customerName || "Client comptant",
+    customerAddress: quote.customerAddress || void 0,
+    customerTvaCode,
+    lines: quote.lines?.map((line) => ({
+      productId: line.productId,
+      reference: line.reference,
+      designation: line.designation,
+      quantity: line.quantity,
+      unitPrice: line.unitPrice,
+      discount: line.discount ?? 0,
+      tva: line.tva ?? 0,
+      totalHT: line.totalHT,
+      totalTTC: line.totalTTC
+    })) || [],
+    totalHT: totals.totalHT,
+    totalTVA: totals.totalTVA,
+    timbreFiscal: timbre,
+    totalTTC: totals.totalTTC,
+    includeTva: quote.includeTva ?? false,
+    amountPaid: 0,
+    amountDue: totals.totalTTC,
+    sourceQuoteId: quote._id
+  });
+  sendSuccess(res, { invoice }, 201);
 }));
 let serverPort$1 = DEFAULT_PORT;
 function createApp() {
@@ -4158,7 +4321,13 @@ let serverPort = DEFAULT_PORT;
 let dbCache = null;
 function demoDataPath() {
   const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
-  return path.join(portableDir || electron.app.getPath("userData"), "demo-data.json");
+  if (portableDir) return path.join(portableDir, "demo-data.json");
+  try {
+    const resourcePath = path.join(process.resourcesPath || path.dirname(process.execPath), "demo-data.json");
+    return resourcePath;
+  } catch {
+    return path.join(electron.app.getPath("userData"), "demo-data.json");
+  }
 }
 function nowIso() {
   return (/* @__PURE__ */ new Date()).toISOString();
@@ -4198,7 +4367,7 @@ function seedDb() {
     { _id: "prd-006", reference: "PEI000006", designation: "Peinture blanche 5L", barcode: "6190000000065", categoryId: categories[3], supplierId: suppliers[0], purchasePrice: 22, salePrice: 34.5, profitMargin: 56.82, discount: 0, tva: 19, stock: 12, minStock: 3, unit: "L", location: "P1" }
   ];
   return {
-    settings: { ...DEFAULT_SETTINGS, companyName: "Quincaillerie Demo", companyPhone: "29665911" },
+    settings: { ...DEFAULT_SETTINGS, companyName: "Supermarché Kaycer", storeName: "Supermarché Kaycer", storeIcon: "store", companyPhone: "29665911" },
     categories,
     suppliers,
     customers,
